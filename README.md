@@ -4,6 +4,11 @@
 
 接管 Claude Code 与 Codex 后，可并行使用多个 Provider 的服务；按优先级逐个调用（支持拖动排序），并通过热力图、按供应商用量统计与请求日志洞察详细数据。基于 [Wails 3](https://v3.wails.io)。
 
+## 下载
+
+[macOS](https://github.com/daodao97/code-swtich/releases) | [windows](https://github.com/daodao97/code-swtich/releases) 
+
+
 ## 预览
 ![亮色主界面](resources/images/code-switch.png)
 ![暗色主界面](resources/images/code-swtich-dark.png)
