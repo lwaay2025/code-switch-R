@@ -241,78 +241,62 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 		}
 		sort.Ints(levels)
 
-		fmt.Printf("[INFO] 共 %d 个 Level 分组：%v\n", len(levels), levels)
+		// 取第一个 Level 的第一个 provider（最高优先级）
+		firstLevel := levels[0]
+		firstProvider := levelGroups[firstLevel][0]
+
+		fmt.Printf("[INFO] 选择 Provider: %s (Level %d) | 可用备选: %d 个 provider 分布在 %d 个 Level\n",
+			firstProvider.Name, firstLevel, len(active), len(levels))
 
 		query := flattenQuery(c.Request.URL.Query())
 		clientHeaders := cloneHeaders(c.Request.Header)
 
-		var lastErr error
-		attemptCount := 0
+		// 获取实际应该使用的模型名
+		effectiveModel := firstProvider.GetEffectiveModel(requestedModel)
 
-		// 外层循环：遍历 Level（从低到高，优先级从高到低）
-		for _, level := range levels {
-			providersInLevel := levelGroups[level]
-			fmt.Printf("[INFO] === 尝试 Level %d（%d 个 provider）===\n", level, len(providersInLevel))
+		// 如果需要映射，修改请求体
+		currentBodyBytes := bodyBytes
+		if effectiveModel != requestedModel && requestedModel != "" {
+			fmt.Printf("[INFO] Provider %s 映射模型: %s -> %s\n", firstProvider.Name, requestedModel, effectiveModel)
 
-			// 内层循环：遍历该 Level 的所有 provider（按数组顺序）
-			for i, provider := range providersInLevel {
-				attemptCount++
-
-				// 获取实际应该使用的模型名
-				effectiveModel := provider.GetEffectiveModel(requestedModel)
-
-				// 如果需要映射，修改请求体
-				currentBodyBytes := bodyBytes
-				if effectiveModel != requestedModel && requestedModel != "" {
-					fmt.Printf("[INFO]   Provider %s 映射模型: %s -> %s\n", provider.Name, requestedModel, effectiveModel)
-
-					modifiedBody, err := ReplaceModelInRequestBody(bodyBytes, effectiveModel)
-					if err != nil {
-						fmt.Printf("[ERROR]   替换模型名失败: %v\n", err)
-						lastErr = err
-						continue
-					}
-					currentBodyBytes = modifiedBody
-				}
-
-				// 详细模式日志：记录 provider、model、level
-				fmt.Printf("[INFO]   [%d/%d] Provider: %s | Model: %s\n",
-					i+1, len(providersInLevel), provider.Name, effectiveModel)
-
-				startTime := time.Now()
-				ok, err := prs.forwardRequest(c, kind, provider, endpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
-				duration := time.Since(startTime)
-
-				if ok {
-					fmt.Printf("[INFO]   ✓ Level %d 成功: %s | 耗时: %.2fs\n", level, provider.Name, duration.Seconds())
-					return
-				}
-
-				// 详细模式日志：记录错误和耗时
-				errorMsg := "未知错误"
-				if err != nil {
-					errorMsg = err.Error()
-				}
-				fmt.Printf("[WARN]   ✗ Level %d 失败: %s | 错误: %s | 耗时: %.2fs\n",
-					level, provider.Name, errorMsg, duration.Seconds())
-				lastErr = err
-
-				// 记录失败到黑名单系统
-				if err := prs.blacklistService.RecordFailure(kind, provider.Name); err != nil {
-					fmt.Printf("[ERROR] 记录失败到黑名单失败: %v\n", err)
-				}
+			modifiedBody, err := ReplaceModelInRequestBody(bodyBytes, effectiveModel)
+			if err != nil {
+				fmt.Printf("[ERROR] 替换模型名失败: %v\n", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("模型映射失败: %v", err)})
+				return
 			}
-
-			// 当前 Level 所有 provider 都失败
-			fmt.Printf("[WARN] Level %d 的所有 %d 个 provider 均失败，尝试下一 Level\n", level, len(providersInLevel))
+			currentBodyBytes = modifiedBody
 		}
 
-		// 所有 Level 的所有 provider 都失败
-		message := fmt.Sprintf("所有 %d 个 Level 的 %d 个 provider 均失败", len(levels), attemptCount)
-		if lastErr != nil {
-			message = fmt.Sprintf("%s: %s", message, lastErr.Error())
+		// 尝试发送请求
+		startTime := time.Now()
+		ok, err := prs.forwardRequest(c, kind, firstProvider, endpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
+		duration := time.Since(startTime)
+
+		if ok {
+			fmt.Printf("[INFO] ✓ 成功: %s (Level %d) | 耗时: %.2fs\n", firstProvider.Name, firstLevel, duration.Seconds())
+			return
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": message})
+
+		// 失败：记录到黑名单并返回错误
+		errorMsg := "未知错误"
+		if err != nil {
+			errorMsg = err.Error()
+		}
+		fmt.Printf("[ERROR] ✗ 失败: %s (Level %d) | 错误: %s | 耗时: %.2fs\n",
+			firstProvider.Name, firstLevel, errorMsg, duration.Seconds())
+
+		// 记录失败到黑名单系统
+		if err := prs.blacklistService.RecordFailure(kind, firstProvider.Name); err != nil {
+			fmt.Printf("[ERROR] 记录失败到黑名单失败: %v\n", err)
+		}
+
+		// 直接返回 502，不尝试其他 provider
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":    fmt.Sprintf("Provider %s 请求失败: %s", firstProvider.Name, errorMsg),
+			"provider": firstProvider.Name,
+			"duration": fmt.Sprintf("%.2fs", duration.Seconds()),
+		})
 	}
 }
 
