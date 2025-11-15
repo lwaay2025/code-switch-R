@@ -10,7 +10,7 @@ import (
 )
 
 type Provider struct {
-	ID      int    `json:"id"`
+	ID      int64  `json:"id"` // 修复：使用 int64 支持大 ID 值
 	Name    string `json:"name"`
 	APIURL  string `json:"apiUrl"`
 	APIKey  string `json:"apiKey"`
@@ -85,7 +85,7 @@ func (ps *ProviderService) SaveProviders(kind string, providers []Provider) erro
 	if err != nil {
 		return err
 	}
-	nameByID := make(map[int]string, len(existingProviders))
+	nameByID := make(map[int64]string, len(existingProviders))
 	for _, p := range existingProviders {
 		nameByID[p.ID] = p.Name
 	}
