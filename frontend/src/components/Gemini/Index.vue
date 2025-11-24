@@ -271,13 +271,15 @@ const router = useRouter()
 
 const geminiIcon = lobeIcons['gemini'] ?? ''
 
+type BindingGeminiStatus = Awaited<ReturnType<typeof GetStatus>>
+
 const loading = ref(false)
 const saving = ref(false)
 const switching = ref(false)
 
 const presets = ref<GeminiPreset[]>([])
 const providers = ref<GeminiProvider[]>([])
-const status = ref<GeminiStatus | null>(null)
+const status = ref<GeminiStatus | BindingGeminiStatus | null>(null)
 
 const modalState = reactive({
   open: false,
