@@ -40,13 +40,13 @@
 
       <!-- 当前状态 -->
       <section v-if="status" class="status-section">
-        <div class="status-card" :class="{ enabled: status.enabled }">
+        <div class="status-card" :class="{ enabled: status?.enabled }">
           <div class="status-icon">
             <span v-html="geminiIcon" aria-hidden="true"></span>
           </div>
           <div class="status-info">
-            <p class="status-title">{{ status.enabled ? t('components.gemini.status.enabled') : t('components.gemini.status.disabled') }}</p>
-            <p v-if="status.currentProvider" class="status-provider">{{ status.currentProvider }}</p>
+            <p class="status-title">{{ status?.enabled ? t('components.gemini.status.enabled') : t('components.gemini.status.disabled') }}</p>
+            <p v-if="status?.currentProvider" class="status-provider">{{ status.currentProvider }}</p>
             <p class="status-auth">{{ authTypeLabel(status?.authType ?? 'gemini-api-key') }}</p>
           </div>
         </div>
@@ -263,16 +263,18 @@ import {
   DeleteProvider,
   SwitchProvider,
   CreateProviderFromPreset,
+  type GeminiProvider,
+  type GeminiPreset,
+  type GeminiStatus,
 } from '../../../bindings/codeswitch/services/geminiservice'
-import type { GeminiProvider, GeminiPreset } from '../../types/gemini'
 
 const { t } = useI18n()
 const router = useRouter()
 
 const geminiIcon = lobeIcons['gemini'] ?? ''
 
-type BindingGeminiStatus = Awaited<ReturnType<typeof GetStatus>>
-type GeminiAuth = BindingGeminiStatus['authType']
+type BindingGeminiStatus = GeminiStatus
+type GeminiAuth = GeminiStatus['authType']
 
 const loading = ref(false)
 const saving = ref(false)
