@@ -323,6 +323,8 @@
         "blacklistThreshold": "失败次数阈值",
         "blacklistDuration": "拉黑时长",
         "saveBlacklist": "保存配置",
+        "enableBlacklist": "启用拉黑功能",
+        "enableBlacklistHint": "关闭后将不再自动拉黑失败的供应商",
         "enableLevelBlacklist": "启用等级拉黑",
         "enableLevelBlacklistHint": "开启后使用分级拉黑机制（L1-L5），关闭则使用固定时长",
         "times": "次",

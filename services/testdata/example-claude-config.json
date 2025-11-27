@@ -1,0 +1,100 @@
+{
+  "providers": [
+    {
+      "id": 1,
+      "name": "Anthropic Official",
+      "apiUrl": "https://api.anthropic.com",
+      "apiKey": "sk-ant-test-key",
+      "officialSite": "https://anthropic.com",
+      "icon": "anthropic",
+      "tint": "#D97757",
+      "accent": "#C65D3C",
+      "enabled": true,
+      "supportedModels": {
+        "claude-3-5-sonnet-20241022": true,
+        "claude-3-5-haiku-20241022": true,
+        "claude-sonnet-4-5-20250929": true,
+        "claude-opus-4-5-20250929": true
+      }
+    },
+    {
+      "id": 2,
+      "name": "OpenRouter",
+      "apiUrl": "https://openrouter.ai/api",
+      "apiKey": "sk-or-test-key",
+      "officialSite": "https://openrouter.ai",
+      "icon": "openrouter",
+      "tint": "#6366F1",
+      "accent": "#4F46E5",
+      "enabled": true,
+      "supportedModels": {
+        "anthropic/claude-3-5-sonnet-20241022": true,
+        "anthropic/claude-sonnet-4-5-20250929": true,
+        "openai/gpt-4": true,
+        "openai/gpt-4-turbo": true,
+        "google/gemini-pro": true,
+        "meta-llama/llama-3.1-405b": true
+      },
+      "modelMapping": {
+        "claude-3-5-sonnet-20241022": "anthropic/claude-3-5-sonnet-20241022",
+        "claude-sonnet-4-5-20250929": "anthropic/claude-sonnet-4-5-20250929",
+        "gpt-4": "openai/gpt-4",
+        "gpt-4-turbo": "openai/gpt-4-turbo",
+        "gemini-pro": "google/gemini-pro"
+      }
+    },
+    {
+      "id": 3,
+      "name": "OpenRouter (Wildcard)",
+      "apiUrl": "https://openrouter.ai/api",
+      "apiKey": "sk-or-test-key-2",
+      "officialSite": "https://openrouter.ai",
+      "icon": "openrouter",
+      "tint": "#6366F1",
+      "accent": "#4F46E5",
+      "enabled": true,
+      "supportedModels": {
+        "anthropic/claude-*": true,
+        "openai/gpt-*": true,
+        "google/gemini-*": true,
+        "meta-llama/llama-*": true
+      },
+      "modelMapping": {
+        "claude-*": "anthropic/claude-*",
+        "gpt-*": "openai/gpt-*",
+        "gemini-*": "google/gemini-*",
+        "llama-*": "meta-llama/llama-*"
+      }
+    },
+    {
+      "id": 4,
+      "name": "Custom API (Mixed)",
+      "apiUrl": "https://api.custom.com",
+      "apiKey": "sk-custom-key",
+      "officialSite": "https://custom.com",
+      "icon": "custom",
+      "tint": "#10B981",
+      "accent": "#059669",
+      "enabled": true,
+      "supportedModels": {
+        "native-model-a": true,
+        "native-model-b": true,
+        "vendor/external-model-c": true
+      },
+      "modelMapping": {
+        "external-model-c": "vendor/external-model-c"
+      }
+    },
+    {
+      "id": 5,
+      "name": "Legacy Provider (No Config)",
+      "apiUrl": "https://api.legacy.com",
+      "apiKey": "sk-legacy-key",
+      "officialSite": "https://legacy.com",
+      "icon": "legacy",
+      "tint": "#94A3B8",
+      "accent": "#64748B",
+      "enabled": true
+    }
+  ]
+}

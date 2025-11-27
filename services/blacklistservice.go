@@ -166,6 +166,12 @@ func (bs *BlacklistService) RecordSuccess(platform string, providerName string) 
 
 // RecordFailure 记录 provider 失败，连续失败次数达到阈值时自动拉黑（支持等级拉黑）
 func (bs *BlacklistService) RecordFailure(platform string, providerName string) error {
+	// 检查拉黑功能是否启用
+	if !bs.settingsService.IsBlacklistEnabled() {
+		log.Printf("🚫 拉黑功能已关闭，跳过 provider %s/%s 的失败记录", platform, providerName)
+		return nil
+	}
+
 	db, err := xdb.DB("default")
 	if err != nil {
 		return fmt.Errorf("获取数据库连接失败: %w", err)
@@ -180,7 +186,14 @@ func (bs *BlacklistService) RecordFailure(platform string, providerName string) 
 
 	// 如果功能关闭，使用旧的固定拉黑模式
 	if !levelConfig.EnableLevelBlacklist {
-		return bs.recordFailureFixedMode(platform, providerName, levelConfig.FallbackMode, levelConfig.FallbackDurationMinutes, levelConfig.FailureThreshold)
+		// 从数据库读取配置（优先使用数据库配置而非默认值）
+		threshold, duration, err := bs.settingsService.GetBlacklistSettings()
+		if err != nil {
+			log.Printf("⚠️  获取数据库拉黑配置失败: %v，使用默认值", err)
+			threshold = levelConfig.FailureThreshold
+			duration = levelConfig.FallbackDurationMinutes
+		}
+		return bs.recordFailureFixedMode(platform, providerName, levelConfig.FallbackMode, duration, threshold)
 	}
 
 	now := time.Now()
@@ -423,6 +436,11 @@ func (bs *BlacklistService) getLevelDuration(level int, config *BlacklistLevelCo
 
 // IsBlacklisted 检查 provider 是否在黑名单中
 func (bs *BlacklistService) IsBlacklisted(platform string, providerName string) (bool, *time.Time) {
+	// 如果拉黑功能已关闭，始终返回未拉黑
+	if !bs.settingsService.IsBlacklistEnabled() {
+		return false, nil
+	}
+
 	db, err := xdb.DB("default")
 	if err != nil {
 		log.Printf("⚠️  获取数据库连接失败: %v", err)

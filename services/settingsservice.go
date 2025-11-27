@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 
 	"github.com/daodao97/xgo/xdb"
@@ -108,6 +109,51 @@ func (ss *SettingsService) GetBlacklistSettings() (threshold int, duration int, 
 	}
 
 	return threshold, duration, nil
+}
+
+// IsBlacklistEnabled 检查拉黑功能是否启用
+func (ss *SettingsService) IsBlacklistEnabled() bool {
+	db, err := xdb.DB("default")
+	if err != nil {
+		log.Printf("⚠️  获取数据库连接失败: %v，默认启用拉黑", err)
+		return true
+	}
+
+	var enabledStr string
+	err = db.QueryRow(`
+		SELECT value FROM app_settings WHERE key = 'enable_blacklist'
+	`).Scan(&enabledStr)
+
+	if err != nil {
+		log.Printf("⚠️  获取拉黑开关失败: %v，默认启用", err)
+		return true
+	}
+
+	return enabledStr == "true"
+}
+
+// UpdateBlacklistEnabled 更新拉黑功能开关
+func (ss *SettingsService) UpdateBlacklistEnabled(enabled bool) error {
+	db, err := xdb.DB("default")
+	if err != nil {
+		return fmt.Errorf("获取数据库连接失败: %w", err)
+	}
+
+	enabledStr := "false"
+	if enabled {
+		enabledStr = "true"
+	}
+
+	_, err = db.Exec(`
+		UPDATE app_settings SET value = ? WHERE key = 'enable_blacklist'
+	`, enabledStr)
+
+	if err != nil {
+		return fmt.Errorf("更新拉黑开关失败: %w", err)
+	}
+
+	log.Printf("✅ 拉黑功能开关已更新: %v", enabled)
+	return nil
 }
 
 // UpdateBlacklistSettings 更新黑名单配置

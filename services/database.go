@@ -69,7 +69,8 @@ func ensureBlacklistTablesWithDB(db *sql.DB) error {
 	const insertDefaultSettings = `
 		INSERT OR IGNORE INTO app_settings (key, value) VALUES
 			('blacklist_failure_threshold', '3'),
-			('blacklist_duration_minutes', '30')
+			('blacklist_duration_minutes', '30'),
+			('enable_blacklist', 'true')
 	`
 
 	if _, err := db.Exec(insertDefaultSettings); err != nil {

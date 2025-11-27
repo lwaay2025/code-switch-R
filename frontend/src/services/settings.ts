@@ -46,3 +46,20 @@ export const getLevelBlacklistEnabled = async (): Promise<boolean> => {
 export const setLevelBlacklistEnabled = async (enabled: boolean): Promise<void> => {
   await Call.ByName(`${SETTINGS_SERVICE}.SetLevelBlacklistEnabled`, enabled)
 }
+
+/**
+ * 获取拉黑功能总开关状态
+ * @returns 是否启用拉黑功能
+ */
+export const getBlacklistEnabled = async (): Promise<boolean> => {
+  const result = await Call.ByName(`${SETTINGS_SERVICE}.IsBlacklistEnabled`)
+  return result as boolean
+}
+
+/**
+ * 设置拉黑功能总开关状态
+ * @param enabled 是否启用拉黑功能
+ */
+export const setBlacklistEnabled = async (enabled: boolean): Promise<void> => {
+  await Call.ByName(`${SETTINGS_SERVICE}.UpdateBlacklistEnabled`, enabled)
+}
