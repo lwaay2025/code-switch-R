@@ -180,7 +180,7 @@ func (bs *BlacklistService) RecordFailure(platform string, providerName string) 
 
 	// 如果功能关闭，使用旧的固定拉黑模式
 	if !levelConfig.EnableLevelBlacklist {
-		return bs.recordFailureFixedMode(platform, providerName, levelConfig.FallbackMode, levelConfig.FallbackDurationMinutes)
+		return bs.recordFailureFixedMode(platform, providerName, levelConfig.FallbackMode, levelConfig.FallbackDurationMinutes, levelConfig.FailureThreshold)
 	}
 
 	now := time.Now()
@@ -311,7 +311,7 @@ func (bs *BlacklistService) RecordFailure(platform string, providerName string) 
 }
 
 // recordFailureFixedMode 固定拉黑模式（向后兼容）
-func (bs *BlacklistService) recordFailureFixedMode(platform string, providerName string, fallbackMode string, fallbackDuration int) error {
+func (bs *BlacklistService) recordFailureFixedMode(platform string, providerName string, fallbackMode string, fallbackDuration int, failureThreshold int) error {
 	if fallbackMode == "none" {
 		log.Printf("🚫 Provider %s/%s 失败，但等级拉黑已关闭且 fallbackMode=none，不拉黑", platform, providerName)
 		return nil
@@ -348,7 +348,7 @@ func (bs *BlacklistService) recordFailureFixedMode(platform string, providerName
 			return fmt.Errorf("插入失败记录失败: %w", err)
 		}
 
-		log.Printf("📊 Provider %s/%s 失败计数: 1/3（固定拉黑模式）", platform, providerName)
+		log.Printf("📊 Provider %s/%s 失败计数: 1/%d（固定拉黑模式）", platform, providerName, failureThreshold)
 		return nil
 	} else if err != nil {
 		return fmt.Errorf("查询黑名单记录失败: %w", err)
@@ -363,8 +363,8 @@ func (bs *BlacklistService) recordFailureFixedMode(platform string, providerName
 	// 失败计数 +1
 	failureCount++
 
-	// 检查是否达到拉黑阈值（固定3次）
-	if failureCount >= 3 {
+	// 检查是否达到拉黑阈值
+	if failureCount >= failureThreshold {
 		blacklistedAt := now
 		blacklistedUntil := now.Add(time.Duration(fallbackDuration) * time.Minute)
 
@@ -397,7 +397,7 @@ func (bs *BlacklistService) recordFailureFixedMode(platform string, providerName
 			return fmt.Errorf("更新失败计数失败: %w", err)
 		}
 
-		log.Printf("📊 Provider %s/%s 失败计数: %d/3（固定模式）", platform, providerName, failureCount)
+		log.Printf("📊 Provider %s/%s 失败计数: %d/%d（固定模式）", platform, providerName, failureCount, failureThreshold)
 	}
 
 	return nil
