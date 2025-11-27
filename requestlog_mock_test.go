@@ -22,7 +22,7 @@ func init() {
 		{
 			Name:   "default",
 			Driver: "sqlite",
-			DSN:    filepath.Join(home, ".code-switch", "app.db?cache=shared&mode=rwc"),
+			DSN:    filepath.Join(home, ".code-switch", "app.db?cache=shared&mode=rwc&_busy_timeout=10000&_journal_mode=WAL"),
 		},
 	}); err != nil {
 		fmt.Printf("初始化 request_log 表失败: %v\n", err)
