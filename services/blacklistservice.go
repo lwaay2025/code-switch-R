@@ -473,7 +473,7 @@ func (bs *BlacklistService) IsBlacklisted(platform string, providerName string) 
 	return false, nil
 }
 
-// ManualUnblockAndReset 手动解除拉黑并重置等级（完全重置）
+// ManualUnblockAndReset 手动解除拉黑（保留等级，如需清零请调用 ManualResetLevel）
 func (bs *BlacklistService) ManualUnblockAndReset(platform string, providerName string) error {
 	db, err := xdb.DB("default")
 	if err != nil {
@@ -495,12 +495,12 @@ func (bs *BlacklistService) ManualUnblockAndReset(platform string, providerName 
 		return fmt.Errorf("查询黑名单记录失败: %w", err)
 	}
 
+	// 【重要】保留 blacklist_level，让降级/宽恕机制逐渐降低等级
 	err = GlobalDBQueue.Exec(`
 		UPDATE provider_blacklist
 		SET blacklisted_at = NULL,
 			blacklisted_until = NULL,
 			failure_count = 0,
-			blacklist_level = 0,
 			last_recovered_at = ?,
 			last_degrade_hour = 0,
 			auto_recovered = 0
@@ -511,7 +511,7 @@ func (bs *BlacklistService) ManualUnblockAndReset(platform string, providerName 
 		return fmt.Errorf("手动解除拉黑失败: %w", err)
 	}
 
-	log.Printf("✅ 手动解除拉黑并重置: %s/%s（等级清零，重新开始降级计时）", platform, providerName)
+	log.Printf("✅ 手动解除拉黑: %s/%s（等级保留，重新开始降级计时）", platform, providerName)
 	return nil
 }
 
@@ -613,13 +613,12 @@ func (bs *BlacklistService) AutoRecoverExpired() error {
 	var failed []string
 
 	// 批量更新所有过期的 provider（使用队列）
-	// 【修复】同时清零 blacklist_level 和记录恢复时间，避免"假恢复"问题
+	// 【重要】保留 blacklist_level，让 RecordSuccess 中的降级/宽恕机制逐渐降低等级
 	for _, item := range toRecover {
 		err := GlobalDBQueue.Exec(`
 			UPDATE provider_blacklist
 			SET auto_recovered = 1,
 				failure_count = 0,
-				blacklist_level = 0,
 				last_recovered_at = ?,
 				last_degrade_hour = 0
 			WHERE platform = ? AND provider_name = ?
@@ -634,7 +633,7 @@ func (bs *BlacklistService) AutoRecoverExpired() error {
 	}
 
 	if len(recovered) > 0 {
-		log.Printf("✅ 自动恢复 %d 个过期拉黑（等级已清零）: %v", len(recovered), recovered)
+		log.Printf("✅ 自动恢复 %d 个过期拉黑（等级保留，等待降级）: %v", len(recovered), recovered)
 	}
 
 	if len(failed) > 0 {
