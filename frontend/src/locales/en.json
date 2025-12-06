@@ -612,7 +612,11 @@
       "restoreError": "Failed to restore default configuration",
       "templateSaved": "Template saved successfully",
       "templateSaveError": "Failed to save template",
-      "jsonParseError": "Invalid JSON format, please check your input"
+      "jsonParseError": "Invalid JSON format, please check your input",
+      "previewTitle": "Config preview (read-only)",
+      "previewUnknownPath": "Unknown path",
+      "smartPasteSuccess": "Parsed {format} config and filled fields",
+      "smartPasteFailed": "Unrecognized paste, please use JSON / TOML / .env content"
     }
   }
 }

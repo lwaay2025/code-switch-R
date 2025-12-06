@@ -41,11 +41,19 @@ type CLIConfigField struct {
 	Required bool   `json:"required,omitempty"`
 }
 
+// CLIConfigFile 配置文件预览（用于前端显示原始内容）
+type CLIConfigFile struct {
+	Path    string `json:"path"`
+	Format  string `json:"format,omitempty"` // "json", "toml", "env"
+	Content string `json:"content"`
+}
+
 // CLIConfig CLI 配置数据
 type CLIConfig struct {
 	Platform     CLIPlatform               `json:"platform"`
 	Fields       []CLIConfigField          `json:"fields"`
 	RawContent   string                    `json:"rawContent,omitempty"`   // 原始文件内容（用于高级编辑）
+	RawFiles     []CLIConfigFile           `json:"rawFiles,omitempty"`     // 多文件内容预览
 	ConfigFormat string                    `json:"configFormat,omitempty"` // "json" 或 "toml"
 	EnvContent   map[string]string         `json:"envContent,omitempty"`   // Gemini .env 内容
 	FilePath     string                    `json:"filePath,omitempty"`     // 配置文件路径
@@ -249,7 +257,13 @@ func (s *CliConfigService) getClaudeConfig() (*CLIConfig, error) {
 	// 读取现有配置
 	var data map[string]interface{}
 	if content, err := os.ReadFile(configPath); err == nil {
-		config.RawContent = string(content)
+		raw := string(content)
+		config.RawContent = raw
+		config.RawFiles = append(config.RawFiles, CLIConfigFile{
+			Path:    configPath,
+			Format:  "json",
+			Content: raw,
+		})
 		if err := json.Unmarshal(content, &data); err != nil {
 			return nil, fmt.Errorf("解析 Claude 配置失败: %w", err)
 		}
@@ -402,6 +416,11 @@ func (s *CliConfigService) getCodexConfigPath() string {
 	return filepath.Join(home, ".codex", "config.toml")
 }
 
+func (s *CliConfigService) getCodexAuthPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".codex", "auth.json")
+}
+
 func (s *CliConfigService) getCodexConfig() (*CLIConfig, error) {
 	configPath := s.getCodexConfigPath()
 	config := &CLIConfig{
@@ -415,12 +434,28 @@ func (s *CliConfigService) getCodexConfig() (*CLIConfig, error) {
 	// 读取现有配置
 	var data map[string]interface{}
 	if content, err := os.ReadFile(configPath); err == nil {
-		config.RawContent = string(content)
+		raw := string(content)
+		config.RawContent = raw
+		config.RawFiles = append(config.RawFiles, CLIConfigFile{
+			Path:    configPath,
+			Format:  "toml",
+			Content: raw,
+		})
 		if err := toml.Unmarshal(content, &data); err != nil {
 			return nil, fmt.Errorf("解析 Codex 配置失败: %w", err)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("读取 Codex 配置失败: %w", err)
+	}
+
+	// 读取 auth.json 预览
+	authPath := s.getCodexAuthPath()
+	if authContent, err := os.ReadFile(authPath); err == nil {
+		config.RawFiles = append(config.RawFiles, CLIConfigFile{
+			Path:    authPath,
+			Format:  "json",
+			Content: string(authContent),
+		})
 	}
 
 	baseURL := s.baseURL()
@@ -569,8 +604,14 @@ func (s *CliConfigService) getGeminiConfig() (*CLIConfig, error) {
 
 	// 读取 .env 文件
 	if content, err := os.ReadFile(envPath); err == nil {
-		config.RawContent = string(content)
-		config.EnvContent = parseEnvFile(string(content))
+		raw := string(content)
+		config.RawContent = raw
+		config.RawFiles = append(config.RawFiles, CLIConfigFile{
+			Path:    envPath,
+			Format:  "env",
+			Content: raw,
+		})
+		config.EnvContent = parseEnvFile(raw)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("读取 Gemini .env 失败: %w", err)
 	}

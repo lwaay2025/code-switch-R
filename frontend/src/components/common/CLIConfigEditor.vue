@@ -42,7 +42,7 @@
       </div>
     </div>
 
-    <div v-if="expanded" class="cli-content">
+    <div v-if="expanded" class="cli-content" @paste="handleSmartPaste">
       <div v-if="loading" class="cli-loading">
         {{ t('components.cliConfig.loading') }}
       </div>
@@ -195,6 +195,39 @@
             <span>{{ t('components.cliConfig.setAsTemplate') }}</span>
           </label>
         </div>
+
+        <!-- 配置预览（可折叠） -->
+        <div v-if="previewFiles.length" class="cli-preview-section">
+          <div class="cli-preview-header" @click="togglePreview">
+            <svg
+              class="expand-icon"
+              :class="{ expanded: previewExpanded }"
+              viewBox="0 0 20 20"
+              aria-hidden="true"
+            >
+              <path
+                d="M6 8l4 4 4-4"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                fill="none"
+              />
+            </svg>
+            <span class="preview-icon">👁️</span>
+            <span>{{ t('components.cliConfig.previewTitle') }}</span>
+            <span class="cli-preview-count">{{ previewFiles.length }}</span>
+          </div>
+          <div v-if="previewExpanded" class="cli-preview-list">
+            <div v-for="file in previewFiles" :key="file.path || file.format" class="cli-preview-card">
+              <div class="cli-preview-meta">
+                <span class="cli-preview-name">{{ file.path || t('components.cliConfig.previewUnknownPath') }}</span>
+                <span class="cli-preview-format">{{ (file.format || config?.configFormat || '').toUpperCase() }}</span>
+              </div>
+              <pre class="cli-preview-content">{{ file.content }}</pre>
+            </div>
+          </div>
+        </div>
       </template>
 
       <div v-else class="cli-error">
@@ -215,6 +248,7 @@ import {
   type CLIPlatform,
   type CLIConfig,
   type CLIConfigField,
+  type CLIConfigFile,
 } from '../../services/cliConfig'
 import { showToast } from '../../utils/toast'
 
@@ -235,6 +269,7 @@ const config = ref<CLIConfig | null>(null)
 const editableValues = ref<Record<string, any>>({})
 const isGlobalTemplate = ref(false)
 const customFields = ref<Array<{ key: string; value: string }>>([])
+const previewExpanded = ref(false)
 
 // 获取所有预置字段的 key（包括锁定和可编辑）
 const presetFieldKeys = computed(() => {
@@ -264,6 +299,23 @@ const lockedFields = computed(() => {
 
 const editableFields = computed(() => {
   return config.value?.fields.filter(f => !f.locked) || []
+})
+
+// 配置文件预览列表
+const previewFiles = computed((): CLIConfigFile[] => {
+  if (!config.value) return []
+  if (config.value.rawFiles && config.value.rawFiles.length > 0) {
+    return config.value.rawFiles
+  }
+  // 回退兼容：使用 rawContent
+  if (config.value.rawContent) {
+    return [{
+      path: config.value.filePath || '',
+      format: config.value.configFormat,
+      content: config.value.rawContent,
+    }]
+  }
+  return []
 })
 
 // 获取字段值，支持嵌套的 env.* 字段
@@ -452,6 +504,204 @@ const handleRestoreDefault = async () => {
     console.error('Failed to restore default:', error)
     showToast(t('components.cliConfig.restoreError'), 'error')
   }
+}
+
+// ========== 智能粘贴功能 ==========
+
+const handleSmartPaste = (event: ClipboardEvent) => {
+  // 如果在输入框内粘贴，不触发智能解析
+  const target = event.target as HTMLElement
+  if (
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.tagName === 'SELECT' ||
+    target.isContentEditable
+  ) {
+    return
+  }
+
+  const text = event.clipboardData?.getData('text')?.trim()
+  if (!text) return
+
+  const parsed = parseSmartConfig(text)
+  if (!parsed) {
+    // 只有看起来像配置的内容才提示错误
+    if (text.includes('{') || text.includes('=') || text.includes('\n')) {
+      showToast(t('components.cliConfig.smartPasteFailed'), 'error')
+    }
+    return
+  }
+
+  event.preventDefault()
+  applyParsedConfig(parsed.data)
+  showToast(t('components.cliConfig.smartPasteSuccess', { format: parsed.format.toUpperCase() }), 'success')
+}
+
+const parseSmartConfig = (content: string): { data: Record<string, any>; format: 'json' | 'toml' | 'env' } | null => {
+  // 尝试 JSON
+  try {
+    const jsonVal = JSON.parse(content)
+    if (jsonVal && typeof jsonVal === 'object') {
+      return { data: jsonVal as Record<string, any>, format: 'json' }
+    }
+  } catch {
+    // ignore
+  }
+
+  // 尝试 TOML（轻量解析）
+  const tomlVal = parseTomlLite(content)
+  if (tomlVal) {
+    return { data: tomlVal, format: 'toml' }
+  }
+
+  // 尝试 ENV
+  const envVal = parseEnvText(content)
+  if (envVal && Object.keys(envVal).length > 0) {
+    return { data: envVal, format: 'env' }
+  }
+
+  return null
+}
+
+// 轻量 TOML 解析，仅支持键值行
+const parseTomlLite = (content: string): Record<string, any> | null => {
+  const result: Record<string, any> = {}
+  const lines = content.split(/\r?\n/)
+  lines.forEach(line => {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('[')) return
+    const eqIndex = trimmed.indexOf('=')
+    if (eqIndex === -1) return
+    const key = trimmed.slice(0, eqIndex).trim()
+    let value: any = trimmed.slice(eqIndex + 1).trim()
+    if (!key) return
+    if (value.startsWith('"') && value.endsWith('"')) {
+      value = value.slice(1, -1)
+    } else if (/^(true|false)$/i.test(value)) {
+      value = value.toLowerCase() === 'true'
+    } else if (!Number.isNaN(Number(value)) && value !== '') {
+      value = Number(value)
+    }
+    result[key] = value
+  })
+  return Object.keys(result).length > 0 ? result : null
+}
+
+// 解析 ENV 格式
+const parseEnvText = (content: string): Record<string, string> => {
+  const result: Record<string, string> = {}
+  const lines = content.split(/\r?\n/)
+  lines.forEach(line => {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) return
+    const eqIndex = trimmed.indexOf('=')
+    if (eqIndex === -1) return
+    const key = trimmed.slice(0, eqIndex).trim()
+    const value = trimmed.slice(eqIndex + 1).trim()
+    if (key) {
+      result[key] = value
+    }
+  })
+  return result
+}
+
+// 应用解析后的配置
+const applyParsedConfig = (data: Record<string, any>) => {
+  const next = { ...editableValues.value }
+
+  const mergeCustom = (key: string, value: any) => {
+    next[key] = value
+  }
+
+  const mergeEnv = (envData: Record<string, any>, locked: string[] = []) => {
+    const env = { ...(next.env as Record<string, any> || {}) }
+    Object.entries(envData).forEach(([k, v]) => {
+      if (!locked.includes(k)) {
+        env[k] = v
+      }
+    })
+    next.env = env
+  }
+
+  const coerceBoolean = (value: any): boolean | undefined => {
+    if (typeof value === 'boolean') return value
+    if (typeof value === 'string') {
+      const lowered = value.trim().toLowerCase()
+      if (lowered === 'true') return true
+      if (lowered === 'false') return false
+    }
+    return undefined
+  }
+
+  switch (props.platform) {
+    case 'claude': {
+      if (typeof data.model === 'string') next.model = data.model
+      if (typeof data.alwaysThinkingEnabled !== 'undefined') {
+        const boolVal = coerceBoolean(data.alwaysThinkingEnabled)
+        if (typeof boolVal === 'boolean') {
+          next.alwaysThinkingEnabled = boolVal
+        }
+      }
+      if (data.enabledPlugins && typeof data.enabledPlugins === 'object') {
+        next.enabledPlugins = data.enabledPlugins
+      }
+      if (data.env && typeof data.env === 'object') {
+        mergeEnv(data.env as Record<string, any>, ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN'])
+      } else {
+        const envCandidates: Record<string, any> = {}
+        Object.entries(data).forEach(([k, v]) => {
+          if (/^[A-Z0-9_]+$/.test(k)) {
+            envCandidates[k] = v
+          }
+        })
+        if (Object.keys(envCandidates).length) {
+          mergeEnv(envCandidates, ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN'])
+        }
+      }
+      break
+    }
+    case 'codex': {
+      if (typeof data.model === 'string') next.model = data.model
+      if (typeof data.model_reasoning_effort === 'string') next.model_reasoning_effort = data.model_reasoning_effort
+      if (typeof data.disable_response_storage !== 'undefined') {
+        const boolVal = coerceBoolean(data.disable_response_storage)
+        if (typeof boolVal === 'boolean') {
+          next.disable_response_storage = boolVal
+        }
+      }
+      break
+    }
+    case 'gemini': {
+      Object.entries(data).forEach(([k, v]) => {
+        if (k === 'GEMINI_API_KEY' && typeof v === 'string') {
+          next.GEMINI_API_KEY = v
+        } else if (k === 'GEMINI_MODEL' && typeof v === 'string') {
+          next.GEMINI_MODEL = v
+        } else if (/^[A-Z0-9_]+$/.test(k) && k !== 'GOOGLE_GEMINI_BASE_URL') {
+          mergeCustom(k, v)
+        }
+      })
+      break
+    }
+    default:
+      break
+  }
+
+  // 兜底：将未匹配的普通键作为自定义字段
+  Object.entries(data).forEach(([k, v]) => {
+    if (!presetFieldKeys.value.has(k) && !lockedFieldKeys.value.has(k) && typeof v !== 'object') {
+      mergeCustom(k, v)
+    }
+  })
+
+  editableValues.value = next
+  extractCustomFields()
+  emitChanges()
+}
+
+// 切换预览区展开状态
+const togglePreview = () => {
+  previewExpanded.value = !previewExpanded.value
 }
 
 // 监听 modelValue 变化
@@ -811,6 +1061,99 @@ onMounted(() => {
   width: 16px;
   height: 16px;
   cursor: pointer;
+}
+
+/* 预览区样式 */
+.cli-preview-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--mac-border);
+}
+
+.cli-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mac-text-secondary);
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+}
+
+.cli-preview-header:hover {
+  color: var(--mac-text);
+}
+
+.preview-icon {
+  font-size: 14px;
+}
+
+.cli-preview-count {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: var(--mac-surface-strong);
+  color: var(--mac-text-secondary);
+}
+
+.cli-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.cli-preview-card {
+  border: 1px solid var(--mac-border);
+  border-radius: 6px;
+  background: var(--mac-surface-strong);
+  overflow: hidden;
+}
+
+.cli-preview-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--mac-surface);
+  border-bottom: 1px solid var(--mac-border);
+}
+
+.cli-preview-name {
+  font-size: 11px;
+  color: var(--mac-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+.cli-preview-format {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--mac-accent);
+  color: white;
+  flex-shrink: 0;
+}
+
+.cli-preview-content {
+  margin: 0;
+  padding: 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: monospace;
+  color: var(--mac-text);
+  background: var(--mac-bg);
 }
 
 /* 深色模式适配 */

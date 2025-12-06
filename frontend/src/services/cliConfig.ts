@@ -13,11 +13,19 @@ export interface CLIConfigField {
   required?: boolean
 }
 
+// 配置文件预览（用于前端显示原始内容）
+export interface CLIConfigFile {
+  path: string
+  format?: 'json' | 'toml' | 'env' | string
+  content: string
+}
+
 // CLI 配置数据
 export interface CLIConfig {
   platform: CLIPlatform
   fields: CLIConfigField[]
   rawContent?: string
+  rawFiles?: CLIConfigFile[]
   configFormat?: 'json' | 'toml' | 'env'
   envContent?: Record<string, string>
   filePath?: string
