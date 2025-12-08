@@ -1619,6 +1619,7 @@ export class ReqeustLog {
     "created_at": string;
     "input_cost": number;
     "output_cost": number;
+    "reasoning_cost": number;
     "cache_create_cost": number;
     "cache_read_cost": number;
     "ephemeral_5m_cost": number;
@@ -1672,6 +1673,9 @@ export class ReqeustLog {
         }
         if (!("output_cost" in $$source)) {
             this["output_cost"] = 0;
+        }
+        if (!("reasoning_cost" in $$source)) {
+            this["reasoning_cost"] = 0;
         }
         if (!("cache_create_cost" in $$source)) {
             this["cache_create_cost"] = 0;
