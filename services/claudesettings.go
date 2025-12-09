@@ -42,13 +42,21 @@ func (css *ClaudeSettingsService) ProxyStatus() (ClaudeProxyStatus, error) {
 		}
 		return status, err
 	}
-	var payload claudeSettingsFile
+	// 使用 map[string]any 宽容解析，避免 env 中非字符串值导致整体解析失败
+	var payload map[string]any
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return status, nil
 	}
+	env, _ := payload["env"].(map[string]any)
+	if env == nil {
+		return status, nil
+	}
+	// 将 env 值转为字符串进行比较（nil 时返回空字符串）
+	authToken := anyToString(env["ANTHROPIC_AUTH_TOKEN"])
+	baseURLVal := anyToString(env["ANTHROPIC_BASE_URL"])
 	baseURL := css.baseURL()
-	enabled := strings.EqualFold(payload.Env["ANTHROPIC_AUTH_TOKEN"], claudeAuthTokenValue) &&
-		strings.EqualFold(payload.Env["ANTHROPIC_BASE_URL"], baseURL)
+	enabled := strings.EqualFold(authToken, claudeAuthTokenValue) &&
+		strings.EqualFold(baseURLVal, baseURL)
 	status.Enabled = enabled
 	return status, nil
 }
@@ -150,6 +158,13 @@ func (css *ClaudeSettingsService) baseURL() string {
 	return host
 }
 
-type claudeSettingsFile struct {
-	Env map[string]string `json:"env"`
+// anyToString 将 any 类型安全转换为字符串，nil 返回空字符串
+func anyToString(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", v)
 }
