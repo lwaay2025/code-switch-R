@@ -1,3 +1,10 @@
+# Code Switch v1.5.4
+
+## 更新亮点
+- 🔧 **彻底修复 Claude 代理开关状态问题**：根本原因是后端 `ProxyStatus` 使用 `map[string]string` 解析 `env`，当配置文件中存在非字符串值时解析失败，导致状态始终返回 `false`。现改用 `map[string]any` 宽容解析。
+- 🔄 **CI 自动同步版本号**：构建时自动从 Git Tag 提取版本号，更新到所有平台配置文件。
+- 📝 **Release 自动提取更新说明**：从 `RELEASE_NOTES.md` 自动提取当前版本的更新内容。
+
 # Code Switch v1.5.3
 
 ## 更新亮点
