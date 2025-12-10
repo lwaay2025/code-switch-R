@@ -205,7 +205,7 @@
 
       <div class="modal-scroll">
       <!-- 表单模式 -->
-      <form v-if="modalMode === 'form' || modalState.editingName" class="vendor-form" @submit.prevent="submitModal">
+      <form v-if="modalMode === 'form'" class="vendor-form" @submit.prevent="submitModal">
         <div class="form-row">
           <label class="form-field">
             <span>{{ t('components.mcp.form.name') }}</span>
