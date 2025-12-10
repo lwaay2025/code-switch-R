@@ -129,6 +129,34 @@ func (ps *ProviderService) SaveProviders(kind string, providers []Provider) erro
 	return ps.saveProvidersLocked(kind, providers)
 }
 
+// loadProvidersRaw 原样读取配置文件（不迁移、不保存）
+// 用于内部需要读取现有配置但不触发迁移的场景（如名称校验）
+func (ps *ProviderService) loadProvidersRaw(kind string) ([]Provider, error) {
+	path, err := providerFilePath(kind)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var envelope providerEnvelope
+	if len(data) == 0 {
+		return []Provider{}, nil
+	}
+
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, err
+	}
+
+	return envelope.Providers, nil
+}
+
 // saveProvidersLocked 内部保存方法，调用方必须已持有锁
 func (ps *ProviderService) saveProvidersLocked(kind string, providers []Provider) error {
 	path, err := providerFilePath(kind)
@@ -137,7 +165,8 @@ func (ps *ProviderService) saveProvidersLocked(kind string, providers []Provider
 	}
 
 	// 加载现有配置，用于检查 name 是否被修改
-	existingProviders, err := ps.LoadProviders(kind)
+	// 使用原样读取，避免触发迁移导致死锁
+	existingProviders, err := ps.loadProvidersRaw(kind)
 	if err != nil {
 		return err
 	}
