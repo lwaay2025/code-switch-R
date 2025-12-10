@@ -733,10 +733,10 @@
 
                 <div v-if="modalState.form.availabilityMonitorEnabled" class="form-field">
                   <span>{{ t('components.main.form.labels.availabilityTimeout') }}</span>
-                  <BaseInput
+                  <input
                     v-model.number="modalState.form.availabilityConfig!.timeout"
                     type="number"
-                    :placeholder="'15000'"
+                    placeholder="15000"
                     class="model-input"
                   />
                   <span class="field-hint">{{ t('components.main.form.hints.availabilityTimeout') }}</span>

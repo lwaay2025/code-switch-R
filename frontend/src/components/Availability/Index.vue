@@ -1,0 +1,328 @@
+<script setup lang="ts">
+import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import {
+  getLatestResults,
+  runAllChecks,
+  runSingleCheck,
+  setAvailabilityMonitorEnabled,
+  isPollingRunning,
+  ProviderTimeline,
+  HealthStatus,
+  formatStatus,
+  getStatusColor,
+} from '../../services/healthcheck'
+
+const { t } = useI18n()
+
+// 状态
+const loading = ref(true)
+const refreshing = ref(false)
+const timelines = ref<Record<string, ProviderTimeline[]>>({})
+const pollingRunning = ref(false)
+const lastUpdated = ref<Date | null>(null)
+const nextRefreshIn = ref(0)
+
+// 刷新定时器
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+let countdownTimer: ReturnType<typeof setInterval> | null = null
+
+// 计算属性：状态统计
+const statusStats = computed(() => {
+  const stats = {
+    operational: 0,
+    degraded: 0,
+    failed: 0,
+    disabled: 0,
+    total: 0,
+  }
+
+  for (const platform of Object.keys(timelines.value)) {
+    for (const timeline of timelines.value[platform] || []) {
+      stats.total++
+      if (!timeline.availabilityMonitorEnabled) {
+        stats.disabled++
+      } else if (timeline.latest) {
+        switch (timeline.latest.status) {
+          case HealthStatus.OPERATIONAL:
+            stats.operational++
+            break
+          case HealthStatus.DEGRADED:
+            stats.degraded++
+            break
+          case HealthStatus.FAILED:
+          case HealthStatus.VALIDATION_ERROR:
+            stats.failed++
+            break
+        }
+      } else {
+        stats.disabled++
+      }
+    }
+  }
+
+  return stats
+})
+
+// 计算属性：所有平台列表（过滤掉空平台）
+const platforms = computed(() =>
+  Object.keys(timelines.value).filter((platform) => (timelines.value[platform]?.length || 0) > 0)
+)
+
+// 加载数据
+async function loadData() {
+  try {
+    timelines.value = await getLatestResults()
+    pollingRunning.value = await isPollingRunning()
+    lastUpdated.value = new Date()
+  } catch (error) {
+    console.error('Failed to load availability data:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+// 刷新全部
+async function refreshAll() {
+  if (refreshing.value) return
+  refreshing.value = true
+  try {
+    await runAllChecks()
+    await loadData()
+  } catch (error) {
+    console.error('Failed to refresh:', error)
+  } finally {
+    refreshing.value = false
+  }
+}
+
+// 检测单个 Provider
+async function checkSingle(platform: string, providerId: number) {
+  try {
+    await runSingleCheck(platform, providerId)
+    await loadData()
+  } catch (error) {
+    console.error('Failed to check provider:', error)
+  }
+}
+
+// 切换监控开关
+async function toggleMonitor(platform: string, providerId: number, enabled: boolean) {
+  try {
+    await setAvailabilityMonitorEnabled(platform, providerId, enabled)
+    await loadData()
+  } catch (error) {
+    console.error('Failed to toggle monitor:', error)
+  }
+}
+
+// 格式化时间
+function formatTime(dateStr: string): string {
+  if (!dateStr) return '-'
+  const date = new Date(dateStr)
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+// 格式化上次更新时间
+function formatLastUpdated(): string {
+  if (!lastUpdated.value) return '-'
+  return lastUpdated.value.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+// 启动刷新定时器
+function startRefreshTimer() {
+  // 每 60 秒刷新一次
+  const refreshInterval = 60000
+  nextRefreshIn.value = 60
+
+  refreshTimer = setInterval(() => {
+    loadData()
+    nextRefreshIn.value = 60
+  }, refreshInterval)
+
+  countdownTimer = setInterval(() => {
+    if (nextRefreshIn.value > 0) {
+      nextRefreshIn.value--
+    }
+  }, 1000)
+}
+
+// 停止定时器
+function stopTimers() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+  if (countdownTimer) {
+    clearInterval(countdownTimer)
+    countdownTimer = null
+  }
+}
+
+onMounted(async () => {
+  await loadData()
+  startRefreshTimer()
+})
+
+onUnmounted(() => {
+  stopTimers()
+})
+</script>
+
+<template>
+  <div class="availability-page p-6">
+    <!-- 页面标题 -->
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h1 class="text-2xl font-semibold text-[var(--mac-text)]">
+          {{ t('availability.title') }}
+        </h1>
+        <p class="text-sm text-[var(--mac-text-secondary)] mt-1">
+          {{ t('availability.subtitle') }}
+        </p>
+      </div>
+      <div class="flex items-center gap-3">
+        <button
+          @click="refreshAll"
+          :disabled="refreshing"
+          class="px-4 py-2 bg-[var(--mac-accent)] text-white rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+        >
+          <span v-if="refreshing">{{ t('availability.refreshing') }}</span>
+          <span v-else>{{ t('availability.refreshAll') }}</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 状态概览 -->
+    <div class="grid grid-cols-4 gap-4 mb-6">
+      <div class="stat-card bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl p-4">
+        <div class="text-3xl font-bold text-green-600 dark:text-green-400">{{ statusStats.operational }}</div>
+        <div class="text-sm text-green-700 dark:text-green-300">{{ t('availability.stats.operational') }}</div>
+      </div>
+      <div class="stat-card bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-4">
+        <div class="text-3xl font-bold text-yellow-600 dark:text-yellow-400">{{ statusStats.degraded }}</div>
+        <div class="text-sm text-yellow-700 dark:text-yellow-300">{{ t('availability.stats.degraded') }}</div>
+      </div>
+      <div class="stat-card bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4">
+        <div class="text-3xl font-bold text-red-600 dark:text-red-400">{{ statusStats.failed }}</div>
+        <div class="text-sm text-red-700 dark:text-red-300">{{ t('availability.stats.failed') }}</div>
+      </div>
+      <div class="stat-card bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4">
+        <div class="text-3xl font-bold text-gray-600 dark:text-gray-400">{{ statusStats.disabled }}</div>
+        <div class="text-sm text-gray-700 dark:text-gray-300">{{ t('availability.stats.disabled') }}</div>
+      </div>
+    </div>
+
+    <!-- 刷新状态 -->
+    <div class="flex items-center justify-between text-sm text-[var(--mac-text-secondary)] mb-4">
+      <span>{{ t('availability.lastUpdate') }}: {{ formatLastUpdated() }}</span>
+      <span>{{ t('availability.nextRefresh') }}: {{ nextRefreshIn }}s</span>
+    </div>
+
+    <!-- 加载状态 -->
+    <div v-if="loading" class="flex items-center justify-center py-12">
+      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--mac-accent)]"></div>
+    </div>
+
+    <!-- Provider 列表 -->
+    <div v-else class="space-y-6">
+      <!-- 动态遍历所有平台 -->
+      <div v-for="platform in platforms" :key="platform">
+        <div v-if="timelines[platform]?.length">
+          <h2 class="text-lg font-semibold text-[var(--mac-text)] mb-3 capitalize">
+            {{ platform }} {{ t('availability.providers') }}
+          </h2>
+          <div class="space-y-3">
+            <div
+              v-for="timeline in timelines[platform]"
+              :key="timeline.providerId"
+              class="provider-card bg-[var(--mac-surface)] border border-[var(--mac-border)] rounded-xl p-4"
+            >
+              <div class="flex items-center justify-between">
+                <!-- 左侧：开关 + 名称 + 状态 -->
+                <div class="flex items-center gap-4">
+                  <!-- 开关 -->
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      :checked="timeline.availabilityMonitorEnabled"
+                      @change="toggleMonitor(platform, timeline.providerId, !timeline.availabilityMonitorEnabled)"
+                      class="sr-only peer"
+                    />
+                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-[var(--mac-accent)]"></div>
+                  </label>
+
+                  <!-- 名称 -->
+                  <span class="font-medium text-[var(--mac-text)]">{{ timeline.providerName }}</span>
+
+                  <!-- 状态指示 -->
+                  <span v-if="timeline.availabilityMonitorEnabled && timeline.latest" :class="getStatusColor(timeline.latest.status)">
+                    {{ formatStatus(timeline.latest.status) }}
+                  </span>
+                  <span v-else class="text-gray-400">{{ t('availability.notMonitored') }}</span>
+                </div>
+
+                <!-- 右侧：延迟 + 可用率 + 按钮 -->
+                <div class="flex items-center gap-4">
+                  <!-- 延迟 -->
+                  <span v-if="timeline.latest?.latencyMs" class="text-sm text-[var(--mac-text-secondary)]">
+                    {{ timeline.latest.latencyMs }}ms
+                  </span>
+
+                  <!-- 可用率 -->
+                  <span v-if="timeline.uptime > 0" class="text-sm text-[var(--mac-text-secondary)]">
+                    {{ timeline.uptime.toFixed(1) }}%
+                  </span>
+
+                  <!-- 检测按钮 -->
+                  <button
+                    v-if="timeline.availabilityMonitorEnabled"
+                    @click="checkSingle(platform, timeline.providerId)"
+                    class="px-3 py-1 text-sm bg-[var(--mac-surface-strong)] hover:bg-[var(--mac-border)] rounded-lg transition-colors"
+                  >
+                    {{ t('availability.check') }}
+                  </button>
+                </div>
+              </div>
+
+              <!-- 时间线（如果有历史记录） -->
+              <div v-if="timeline.items?.length > 0" class="mt-3 flex gap-1">
+                <div
+                  v-for="(item, idx) in timeline.items.slice(0, 20)"
+                  :key="idx"
+                  :title="`${formatTime(item.checkedAt)} - ${formatStatus(item.status)} (${item.latencyMs}ms)`"
+                  class="w-3 h-3 rounded-sm"
+                  :class="{
+                    'bg-green-500': item.status === HealthStatus.OPERATIONAL,
+                    'bg-yellow-500': item.status === HealthStatus.DEGRADED,
+                    'bg-red-500': item.status === HealthStatus.FAILED || item.status === HealthStatus.VALIDATION_ERROR,
+                  }"
+                ></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 无数据提示 -->
+      <div v-if="platforms.length === 0" class="text-center py-12 text-[var(--mac-text-secondary)]">
+        {{ t('availability.noProviders') }}
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.availability-page {
+  min-height: 100vh;
+  background: var(--mac-surface);
+}
+
+.provider-card {
+  transition: box-shadow 0.2s;
+}
+
+.provider-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+</style>
