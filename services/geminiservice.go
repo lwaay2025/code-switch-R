@@ -718,8 +718,9 @@ func (s *GeminiService) EnableProxy() error {
 		existingEnv = make(map[string]string)
 	}
 
-	// 设置代理 URL
+	// 设置代理 URL 和占位 API Key（与 Claude/Codex 保持一致）
 	existingEnv["GOOGLE_GEMINI_BASE_URL"] = buildProxyURL(s.relayAddr)
+	existingEnv["GEMINI_API_KEY"] = "code-switch"
 
 	// 写入 .env
 	if err := writeGeminiEnv(existingEnv); err != nil {
