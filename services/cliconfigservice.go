@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -15,11 +16,29 @@ import (
 // 管理 Claude Code、Codex、Gemini 的 CLI 配置文件
 type CliConfigService struct {
 	relayAddr string
+	homeDir   string // 缓存的用户家目录（已校验）
+	homeErr   error  // 家目录获取错误
 }
 
 // NewCliConfigService 创建 CLI 配置服务
 func NewCliConfigService(relayAddr string) *CliConfigService {
-	return &CliConfigService{relayAddr: relayAddr}
+	home, err := getUserHomeDir()
+	return &CliConfigService{
+		relayAddr: relayAddr,
+		homeDir:   home,
+		homeErr:   err,
+	}
+}
+
+// requireHome 校验家目录是否可用
+func (s *CliConfigService) requireHome() error {
+	if s.homeErr != nil {
+		return fmt.Errorf("无法获取用户家目录: %w", s.homeErr)
+	}
+	if s.homeDir == "" || s.homeDir == "." || !filepath.IsAbs(s.homeDir) {
+		return fmt.Errorf("无法获取用户家目录: homeDir 未初始化或无效")
+	}
+	return nil
 }
 
 // CLIPlatform CLI 平台类型
@@ -75,12 +94,15 @@ type CLITemplates struct {
 
 // getTemplatesPath 获取模板存储路径
 func (s *CliConfigService) getTemplatesPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".code-switch", "cli-templates.json")
+	return filepath.Join(s.homeDir, ".code-switch", "cli-templates.json")
 }
 
 // GetConfig 获取指定平台的 CLI 配置
 func (s *CliConfigService) GetConfig(platform string) (*CLIConfig, error) {
+	if err := s.requireHome(); err != nil {
+		return nil, err
+	}
+
 	p := CLIPlatform(platform)
 	switch p {
 	case PlatformClaude:
@@ -96,6 +118,10 @@ func (s *CliConfigService) GetConfig(platform string) (*CLIConfig, error) {
 
 // SaveConfig 保存 CLI 配置
 func (s *CliConfigService) SaveConfig(platform string, editable map[string]interface{}) error {
+	if err := s.requireHome(); err != nil {
+		return err
+	}
+
 	p := CLIPlatform(platform)
 	switch p {
 	case PlatformClaude:
@@ -109,8 +135,50 @@ func (s *CliConfigService) SaveConfig(platform string, editable map[string]inter
 	}
 }
 
+// SaveConfigFileContent 保存指定配置文件内容（预览区高级编辑）
+// 为避免越权写文件，只允许写入本服务管理的固定路径文件
+func (s *CliConfigService) SaveConfigFileContent(platform string, filePath string, content string) error {
+	if err := s.requireHome(); err != nil {
+		return err
+	}
+
+	p := CLIPlatform(platform)
+	cleaned := filepath.Clean(filePath)
+
+	switch p {
+	case PlatformClaude:
+		expected := filepath.Clean(s.getClaudeConfigPath())
+		if !samePath(cleaned, expected) {
+			return fmt.Errorf("非法文件路径: %s", filePath)
+		}
+		return s.saveClaudeConfigContent(expected, content)
+	case PlatformCodex:
+		configPath := filepath.Clean(s.getCodexConfigPath())
+		authPath := filepath.Clean(s.getCodexAuthPath())
+		if samePath(cleaned, configPath) {
+			return s.saveCodexConfigContent(configPath, content)
+		}
+		if samePath(cleaned, authPath) {
+			return s.saveCodexAuthContent(authPath, content)
+		}
+		return fmt.Errorf("非法文件路径: %s", filePath)
+	case PlatformGemini:
+		envPath := filepath.Clean(s.getGeminiEnvPath())
+		if !samePath(cleaned, envPath) {
+			return fmt.Errorf("非法文件路径: %s", filePath)
+		}
+		return s.saveGeminiEnvContent(envPath, content)
+	default:
+		return fmt.Errorf("不支持的平台: %s", platform)
+	}
+}
+
 // GetTemplate 获取指定平台的全局模板
 func (s *CliConfigService) GetTemplate(platform string) (*CLITemplate, error) {
+	if err := s.requireHome(); err != nil {
+		return nil, err
+	}
+
 	templates, err := s.loadTemplates()
 	if err != nil {
 		return nil, err
@@ -130,6 +198,10 @@ func (s *CliConfigService) GetTemplate(platform string) (*CLITemplate, error) {
 
 // SetTemplate 设置指定平台的全局模板
 func (s *CliConfigService) SetTemplate(platform string, template map[string]interface{}, isGlobalDefault bool) error {
+	if err := s.requireHome(); err != nil {
+		return err
+	}
+
 	templates, err := s.loadTemplates()
 	if err != nil {
 		// 如果文件不存在，创建新的模板
@@ -161,7 +233,7 @@ func (s *CliConfigService) GetLockedFields(platform string) []string {
 	case PlatformClaude:
 		return []string{"env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_AUTH_TOKEN"}
 	case PlatformCodex:
-		return []string{"model_provider", "model_providers.code-switch.base_url", "model_providers.code-switch.env_key"}
+		return []string{"model_provider", "preferred_auth_method", "model_providers.code-switch.base_url", "model_providers.code-switch.name", "model_providers.code-switch.wire_api"}
 	case PlatformGemini:
 		return []string{"GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY"}
 	default:
@@ -171,20 +243,21 @@ func (s *CliConfigService) GetLockedFields(platform string) []string {
 
 // RestoreDefault 恢复默认配置
 func (s *CliConfigService) RestoreDefault(platform string) error {
+	if err := s.requireHome(); err != nil {
+		return err
+	}
+
 	p := CLIPlatform(platform)
 
 	// 从备份恢复
 	var configPath string
 	switch p {
 	case PlatformClaude:
-		home, _ := os.UserHomeDir()
-		configPath = filepath.Join(home, ".claude", "settings.json")
+		configPath = s.getClaudeConfigPath()
 	case PlatformCodex:
-		home, _ := os.UserHomeDir()
-		configPath = filepath.Join(home, ".codex", "config.toml")
+		configPath = s.getCodexConfigPath()
 	case PlatformGemini:
-		home, _ := os.UserHomeDir()
-		configPath = filepath.Join(home, ".gemini", ".env")
+		configPath = s.getGeminiEnvPath()
 	default:
 		return fmt.Errorf("不支持的平台: %s", platform)
 	}
@@ -240,8 +313,7 @@ func (s *CliConfigService) geminiBaseURL() string {
 // ========== Claude 配置操作 ==========
 
 func (s *CliConfigService) getClaudeConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".claude", "settings.json")
+	return filepath.Join(s.homeDir, ".claude", "settings.json")
 }
 
 func (s *CliConfigService) getClaudeConfig() (*CLIConfig, error) {
@@ -386,24 +458,33 @@ func (s *CliConfigService) saveClaudeConfig(editable map[string]interface{}) err
 	env["ANTHROPIC_AUTH_TOKEN"] = "code-switch"
 	data["env"] = env
 
-	// 更新可编辑字段
-	if model, ok := editable["model"].(string); ok {
-		data["model"] = model
-	}
-	if alwaysThinking, ok := editable["alwaysThinkingEnabled"].(bool); ok {
-		data["alwaysThinkingEnabled"] = alwaysThinking
-	}
-	if plugins, ok := editable["enabledPlugins"].(map[string]interface{}); ok {
-		data["enabledPlugins"] = plugins
+	// 锁定字段列表（这些字段不允许用户覆盖）
+	lockedFields := map[string]bool{
+		"env.ANTHROPIC_BASE_URL":   true,
+		"env.ANTHROPIC_AUTH_TOKEN": true,
 	}
 
-	// 处理自定义 env 变量
-	if customEnv, ok := editable["env"].(map[string]interface{}); ok {
-		for k, v := range customEnv {
-			if k != "ANTHROPIC_BASE_URL" && k != "ANTHROPIC_AUTH_TOKEN" {
-				env[k] = v
-			}
+	// 合并用户编辑的所有字段（除了锁定字段）
+	for k, v := range editable {
+		// 跳过锁定字段
+		if lockedFields[k] || lockedFields["env."+k] {
+			continue
 		}
+
+		// 特殊处理 env：合并而不是覆盖
+		if k == "env" {
+			if customEnv, ok := v.(map[string]interface{}); ok {
+				for ek, ev := range customEnv {
+					if ek != "ANTHROPIC_BASE_URL" && ek != "ANTHROPIC_AUTH_TOKEN" {
+						env[ek] = ev
+					}
+				}
+			}
+			continue
+		}
+
+		// 其他字段直接覆盖
+		data[k] = v
 	}
 
 	// 确保目录存在
@@ -415,16 +496,49 @@ func (s *CliConfigService) saveClaudeConfig(editable map[string]interface{}) err
 	return AtomicWriteJSON(configPath, data)
 }
 
+// saveClaudeConfigContent 将预览区编辑的 settings.json 写入磁盘，并强制覆盖代理锁定字段
+func (s *CliConfigService) saveClaudeConfigContent(configPath string, content string) error {
+	data := make(map[string]interface{})
+	// 空内容允许，视为从空配置开始
+	if strings.TrimSpace(content) != "" {
+		if err := json.Unmarshal([]byte(content), &data); err != nil {
+			return fmt.Errorf("解析 Claude 配置失败: %w", err)
+		}
+	}
+	if data == nil {
+		data = make(map[string]interface{})
+	}
+
+	// 强制写入锁定字段
+	env, _ := data["env"].(map[string]interface{})
+	if env == nil {
+		env = make(map[string]interface{})
+	}
+	env["ANTHROPIC_BASE_URL"] = s.baseURL()
+	env["ANTHROPIC_AUTH_TOKEN"] = "code-switch"
+	data["env"] = env
+
+	// 创建备份（文件不存在时 CreateBackup 会返回空路径并忽略）
+	if _, err := CreateBackup(configPath); err != nil {
+		fmt.Printf("创建备份失败: %v\n", err)
+	}
+
+	// 确保目录存在
+	if err := EnsureDir(filepath.Dir(configPath)); err != nil {
+		return err
+	}
+
+	return AtomicWriteJSON(configPath, data)
+}
+
 // ========== Codex 配置操作 ==========
 
 func (s *CliConfigService) getCodexConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".codex", "config.toml")
+	return filepath.Join(s.homeDir, ".codex", "config.toml")
 }
 
 func (s *CliConfigService) getCodexAuthPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".codex", "auth.json")
+	return filepath.Join(s.homeDir, ".codex", "auth.json")
 }
 
 func (s *CliConfigService) getCodexConfig() (*CLIConfig, error) {
@@ -473,6 +587,13 @@ func (s *CliConfigService) getCodexConfig() (*CLIConfig, error) {
 			Value:  "code-switch",
 			Locked: true,
 			Hint:   "代理提供商标识",
+			Type:   "string",
+		},
+		CLIConfigField{
+			Key:    "preferred_auth_method",
+			Value:  "apikey",
+			Locked: true,
+			Hint:   "代理认证方式",
 			Type:   "string",
 		},
 		CLIConfigField{
@@ -567,15 +688,21 @@ func (s *CliConfigService) saveCodexConfig(editable map[string]interface{}) erro
 	modelProviders["code-switch"] = provider
 	raw["model_providers"] = modelProviders
 
-	// 更新可编辑字段
-	if model, ok := editable["model"].(string); ok {
-		raw["model"] = model
+	// 锁定字段列表（这些字段不允许用户覆盖）
+	lockedFields := map[string]bool{
+		"model_provider":        true,
+		"preferred_auth_method": true,
+		"model_providers":       true,
 	}
-	if reasoningEffort, ok := editable["model_reasoning_effort"].(string); ok {
-		raw["model_reasoning_effort"] = reasoningEffort
-	}
-	if disableStorage, ok := editable["disable_response_storage"].(bool); ok {
-		raw["disable_response_storage"] = disableStorage
+
+	// 合并用户编辑的所有字段（除了锁定字段）
+	for k, v := range editable {
+		// 跳过锁定字段（包括点号路径的嵌套键）
+		if lockedFields[k] || strings.HasPrefix(k, "model_providers.") {
+			continue
+		}
+		// 其他字段直接覆盖
+		raw[k] = v
 	}
 
 	// 确保目录存在
@@ -596,11 +723,85 @@ func (s *CliConfigService) saveCodexConfig(editable map[string]interface{}) erro
 	return AtomicWriteBytes(configPath, cleaned)
 }
 
+// saveCodexConfigContent 将预览区编辑的 config.toml 写入磁盘，并强制覆盖代理锁定字段
+func (s *CliConfigService) saveCodexConfigContent(configPath string, content string) error {
+	raw := make(map[string]interface{})
+	// 空内容允许，视为从空配置开始
+	if strings.TrimSpace(content) != "" {
+		if err := toml.Unmarshal([]byte(content), &raw); err != nil {
+			return fmt.Errorf("解析 Codex 配置失败: %w", err)
+		}
+	}
+	if raw == nil {
+		raw = make(map[string]interface{})
+	}
+
+	if _, err := CreateBackup(configPath); err != nil {
+		fmt.Printf("创建备份失败: %v\n", err)
+	}
+
+	// 强制写入锁定字段
+	raw["model_provider"] = "code-switch"
+	raw["preferred_auth_method"] = "apikey"
+
+	// 确保 model_providers.code-switch 存在并写入锁定字段
+	modelProviders, ok := raw["model_providers"].(map[string]interface{})
+	if !ok || modelProviders == nil {
+		modelProviders = make(map[string]interface{})
+	}
+	provider, ok := modelProviders["code-switch"].(map[string]interface{})
+	if !ok || provider == nil {
+		provider = make(map[string]interface{})
+	}
+	provider["name"] = "code-switch"
+	provider["base_url"] = s.baseURL()
+	provider["wire_api"] = "responses"
+	provider["requires_openai_auth"] = false
+	modelProviders["code-switch"] = provider
+	raw["model_providers"] = modelProviders
+
+	// 确保目录存在
+	if err := EnsureDir(filepath.Dir(configPath)); err != nil {
+		return err
+	}
+
+	tomlData, err := toml.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("序列化 TOML 失败: %w", err)
+	}
+	cleaned := stripModelProvidersHeader(tomlData)
+	return AtomicWriteBytes(configPath, cleaned)
+}
+
+// saveCodexAuthContent 保存 Codex auth.json（仅做 JSON 校验，不强制覆盖内容）
+func (s *CliConfigService) saveCodexAuthContent(authPath string, content string) error {
+	data := make(map[string]interface{})
+	// 空内容允许（可用于清空/重建）
+	if strings.TrimSpace(content) != "" {
+		if err := json.Unmarshal([]byte(content), &data); err != nil {
+			return fmt.Errorf("解析 Codex auth.json 失败: %w", err)
+		}
+	}
+	if data == nil {
+		data = make(map[string]interface{})
+	}
+
+	if _, err := CreateBackup(authPath); err != nil {
+		fmt.Printf("创建备份失败: %v\n", err)
+	}
+
+	// 确保目录存在
+	if err := EnsureDir(filepath.Dir(authPath)); err != nil {
+		return err
+	}
+
+	return AtomicWriteJSON(authPath, data)
+}
+
 // ========== Gemini 配置操作 ==========
 
 func (s *CliConfigService) getGeminiEnvPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".gemini", ".env")
+	return filepath.Join(s.homeDir, ".gemini", ".env")
 }
 
 func (s *CliConfigService) getGeminiConfig() (*CLIConfig, error) {
@@ -682,7 +883,7 @@ func (s *CliConfigService) getGeminiConfig() (*CLIConfig, error) {
 func (s *CliConfigService) saveGeminiConfig(editable map[string]interface{}) error {
 	envPath := s.getGeminiEnvPath()
 
-	// 读取现有内容
+	// 读取现有内容（保留用户的其他设置）
 	envMap := make(map[string]string)
 	if content, err := os.ReadFile(envPath); err == nil {
 		envMap = parseEnvFile(string(content))
@@ -696,13 +897,24 @@ func (s *CliConfigService) saveGeminiConfig(editable map[string]interface{}) err
 	// 设置锁定字段
 	envMap["GOOGLE_GEMINI_BASE_URL"] = s.geminiBaseURL()
 
-	// 更新可编辑字段
+	// 锁定字段列表（这些字段不允许用户覆盖）
+	lockedFields := map[string]bool{
+		"GOOGLE_GEMINI_BASE_URL": true,
+		"GEMINI_API_KEY":         true,
+	}
+
+	// 合并用户编辑的所有字段（除了锁定字段）
 	for k, v := range editable {
+		// 跳过锁定字段
+		if lockedFields[k] {
+			continue
+		}
+		// 将值转换为字符串（.env 格式只支持字符串值）
 		if str, ok := v.(string); ok {
-			// 不允许覆盖锁定字段
-			if k != "GOOGLE_GEMINI_BASE_URL" && k != "GEMINI_API_KEY" {
-				envMap[k] = str
-			}
+			envMap[k] = str
+		} else {
+			// 对于非字符串类型，转换为字符串表示
+			envMap[k] = fmt.Sprintf("%v", v)
 		}
 	}
 
@@ -716,6 +928,38 @@ func (s *CliConfigService) saveGeminiConfig(editable map[string]interface{}) err
 
 	// 原子写入
 	return AtomicWriteText(envPath, content)
+}
+
+// saveGeminiEnvContent 将预览区编辑的 .env 写入磁盘，并强制覆盖代理锁定字段
+func (s *CliConfigService) saveGeminiEnvContent(envPath string, content string) error {
+	envMap := parseEnvFile(content)
+
+	// 强制写入锁定字段
+	envMap["GOOGLE_GEMINI_BASE_URL"] = s.geminiBaseURL()
+
+	// GEMINI_API_KEY 为系统锁定字段：优先保留磁盘中的现有值；不存在时写入占位值
+	existingAPIKey := ""
+	if oldContent, err := os.ReadFile(envPath); err == nil {
+		oldMap := parseEnvFile(string(oldContent))
+		existingAPIKey = oldMap["GEMINI_API_KEY"]
+	}
+	if existingAPIKey != "" {
+		envMap["GEMINI_API_KEY"] = existingAPIKey
+	} else if envMap["GEMINI_API_KEY"] == "" {
+		envMap["GEMINI_API_KEY"] = "code-switch"
+	}
+
+	if _, err := CreateBackup(envPath); err != nil {
+		fmt.Printf("创建备份失败: %v\n", err)
+	}
+
+	// 确保目录存在
+	if err := EnsureDir(filepath.Dir(envPath)); err != nil {
+		return err
+	}
+
+	// 原子写入
+	return AtomicWriteText(envPath, serializeEnvFile(envMap))
 }
 
 // ========== 模板管理 ==========
@@ -768,6 +1012,14 @@ func serializeEnvFile(envMap map[string]string) string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// samePath 跨平台路径比较（Windows 大小写不敏感）
+func samePath(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 // 注意: parseEnvFile 和 isValidEnvKey 已在 geminiservice.go 中定义

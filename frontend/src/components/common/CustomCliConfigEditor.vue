@@ -143,6 +143,7 @@ import {
   type ConfigFile,
 } from '../../services/customCliService'
 import { showToast } from '../../utils/toast'
+import { extractErrorMessage } from '../../utils/error'
 
 const props = defineProps<{
   toolId: string
@@ -266,7 +267,7 @@ const handleSaveFile = async (fileId: string) => {
     emit('saved')
   } catch (err) {
     console.error(`Failed to save config file ${fileId}:`, err)
-    fileErrors.value[fileId] = String(err)
+    fileErrors.value[fileId] = extractErrorMessage(err)
     showToast(t('components.cliConfig.loadError'), 'error')
   } finally {
     saving.value = false
@@ -313,7 +314,7 @@ const handleSaveAll = async () => {
       successCount++
     } catch (err) {
       console.error(`Failed to save config file ${file.id}:`, err)
-      fileErrors.value[file.id] = String(err)
+      fileErrors.value[file.id] = extractErrorMessage(err)
       failCount++
     }
   }

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,6 +20,9 @@ import (
 
 	"github.com/hashicorp/go-version"
 )
+
+// ErrUACDenied 表示用户取消或拒绝 UAC 提权
+var ErrUACDenied = errors.New("ERR_UAC_DENIED")
 
 // UpdateInfo 更新信息
 type UpdateInfo struct {
@@ -622,7 +626,12 @@ func (us *UpdateService) ApplyUpdate() error {
 	}
 
 	if installErr != nil {
-		// 安装失败，清理状态但保留下载文件（可能需要重试）
+		// UAC 取消：不清理 pending，允许用户重试
+		if errors.Is(installErr, ErrUACDenied) {
+			log.Printf("[UpdateService] 用户取消 UAC，保留待更新状态: %v", installErr)
+			return installErr
+		}
+		// 其他安装失败：清理状态但保留下载文件（可能需要重试）
 		us.clearPendingState()
 		return installErr
 	}
@@ -672,9 +681,6 @@ func (us *UpdateService) applyPortableUpdate(newExePath string) error {
 
 	log.Printf("[UpdateService] 便携版更新: %s -> %s", newExePath, currentExe)
 
-	// 清理更新状态
-	us.clearPendingState()
-
 	// 构建 PowerShell 脚本：等待进程退出 → 替换文件 → 启动新版本
 	backupPath := currentExe + ".old"
 	pid := os.Getpid()
@@ -687,40 +693,73 @@ $currentExe = '%s'
 $newExe = '%s'
 $backupPath = '%s'
 
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$logFile = Join-Path $scriptDir "update-portable.log"
+function Log($msg) {
+  $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+  Add-Content -Path $logFile -Value "[update-portable] $ts $msg"
+}
+
+Log "start update: pid=$pid current=$currentExe new=$newExe backup=$backupPath"
+if (-not (Test-Path $newExe)) {
+  Log "error: new file not exists: $newExe"
+  throw "新文件不存在: $newExe"
+}
+
 # 等待主进程退出（最多 30 秒）
 $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
 if ($proc) {
-    Write-Host "等待进程 $pid 退出..."
+    Log "waiting for process $pid to exit..."
     $proc.WaitForExit(30000) | Out-Null
 }
 
 # 短暂延迟确保文件释放
 Start-Sleep -Milliseconds 500
 
-# 备份旧文件
-if (Test-Path $currentExe) {
-    Move-Item -Path $currentExe -Destination $backupPath -Force
-    Write-Host "已备份: $backupPath"
+try {
+  # 备份旧文件
+  if (Test-Path $currentExe) {
+      Move-Item -Path $currentExe -Destination $backupPath -Force
+      Log "backup ok: $backupPath"
+  }
+
+  # 复制新文件
+  Copy-Item -Path $newExe -Destination $currentExe -Force
+  Log "replace ok: $currentExe"
+
+  # 启动新版本
+  Start-Process -FilePath $currentExe | Out-Null
+  Log "relaunch ok"
+
+  # 清理备份（仅成功后）
+  Start-Sleep -Seconds 2
+  if (Test-Path $backupPath) {
+      Remove-Item -Path $backupPath -Force -ErrorAction SilentlyContinue
+      Log "cleanup backup"
+  }
+
+  Log "update completed"
+  exit 0
+} catch {
+  Log ("update failed: " + $_.Exception.Message)
+  # 回滚：把旧 exe 放回去并尝试启动
+  if (Test-Path $backupPath) {
+    try {
+      Move-Item -Path $backupPath -Destination $currentExe -Force
+      Log "rollback ok"
+      Start-Process -FilePath $currentExe | Out-Null
+      Log "rollback relaunch ok"
+    } catch {
+      Log ("rollback failed: " + $_.Exception.Message)
+    }
+  }
+  exit 1
 }
-
-# 复制新文件
-Copy-Item -Path $newExe -Destination $currentExe -Force
-Write-Host "已替换: $currentExe"
-
-# 清理备份（延迟删除）
-Start-Sleep -Seconds 2
-if (Test-Path $backupPath) {
-    Remove-Item -Path $backupPath -Force -ErrorAction SilentlyContinue
-}
-
-# 启动新版本
-Start-Process -FilePath $currentExe
-Write-Host "更新完成，已启动新版本"
 `,
 		pid,
-		strings.ReplaceAll(currentExe, `\`, `\\`),
-		strings.ReplaceAll(newExePath, `\`, `\\`),
-		strings.ReplaceAll(backupPath, `\`, `\\`),
+		strings.ReplaceAll(strings.ReplaceAll(currentExe, `'`, `''`), `\`, `\\`),
+		strings.ReplaceAll(strings.ReplaceAll(newExePath, `'`, `''`), `\`, `\\`),
+		strings.ReplaceAll(strings.ReplaceAll(backupPath, `'`, `''`), `\`, `\\`),
 	)
 
 	// 将脚本写入临时文件
@@ -741,6 +780,9 @@ Write-Host "更新完成，已启动新版本"
 		return fmt.Errorf("启动更新脚本失败: %w", err)
 	}
 
+	// 脚本已成功启动，清理更新状态
+	us.clearPendingState()
+
 	log.Printf("[UpdateService] 更新脚本已启动 (PID=%d)，准备退出主程序...", cmd.Process.Pid)
 
 	// 释放更新锁
@@ -753,15 +795,298 @@ Write-Host "更新完成，已启动新版本"
 
 // applyUpdateDarwin macOS 平台更新
 func (us *UpdateService) applyUpdateDarwin(zipPath string) error {
-	// TODO: 实现 macOS 更新逻辑
-	// 1. 解压 zip 文件
-	// 2. 替换 /Applications/CodeSwitch.app
-	// 3. 重启应用
-	log.Println("[UpdateService] macOS 更新功能待实现")
+	currentExe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("获取当前可执行文件路径失败: %w", err)
+	}
+
+	currentExe, err = filepath.EvalSymlinks(currentExe)
+	if err != nil {
+		return fmt.Errorf("解析符号链接失败: %w", err)
+	}
+
+	pid := os.Getpid()
+
+	// 定位当前运行的 .app 包路径（支持安装版和便携版）
+	appPath := currentExe
+	for i := 0; i < 6; i++ {
+		if strings.HasSuffix(strings.ToLower(appPath), ".app") {
+			break
+		}
+		parent := filepath.Dir(appPath)
+		if parent == appPath {
+			break
+		}
+		appPath = parent
+	}
+	if !strings.HasSuffix(strings.ToLower(appPath), ".app") {
+		return fmt.Errorf("无法定位当前应用包(.app)路径: %s", currentExe)
+	}
+	targetAppPath := appPath
+	parentDir := filepath.Dir(targetAppPath)
+
+	log.Printf("[UpdateService] macOS 更新目标应用: %s", targetAppPath)
+
+	// 创建临时解压目录
+	if err := os.MkdirAll(us.updateDir, 0o755); err != nil {
+		return fmt.Errorf("创建更新目录失败: %w", err)
+	}
+	extractDir, err := os.MkdirTemp(us.updateDir, "darwin-update-*")
+	if err != nil {
+		return fmt.Errorf("创建临时解压目录失败: %w", err)
+	}
+
+	log.Printf("[UpdateService] 解压更新包: %s -> %s", zipPath, extractDir)
+	unzipCmd := exec.Command("unzip", "-q", "-o", zipPath, "-d", extractDir)
+	unzipOut, err := unzipCmd.CombinedOutput()
+	if err != nil {
+		_ = os.RemoveAll(extractDir)
+		return fmt.Errorf("解压更新包失败: %w, 输出: %s", err, strings.TrimSpace(string(unzipOut)))
+	}
+
+	// 查找新 .app 包：优先同名、浅层优先、必要时递归
+	preferredName := filepath.Base(targetAppPath) // e.g. CodeSwitch.app
+	newAppPath, err := findNewAppBundle(extractDir, preferredName)
+	if err != nil {
+		_ = os.RemoveAll(extractDir)
+		return err
+	}
+	log.Printf("[UpdateService] 已找到新应用包: %s", newAppPath)
+
+	// 检查目标目录可写（/Applications 可能无权限）
+	testFile := filepath.Join(parentDir, fmt.Sprintf(".updateservice-write-test-%d", pid))
+	if err := os.WriteFile(testFile, []byte("test"), 0o644); err != nil {
+		log.Printf("[UpdateService] 目标目录不可写: %s, err=%v", parentDir, err)
+		_ = os.RemoveAll(extractDir)
+		return fmt.Errorf("目标目录不可写，无法自动更新到 %s，请手动安装或使用管理员权限", parentDir)
+	}
+	_ = os.Remove(testFile)
+
+	// 构建 bash 脚本：等待进程退出 → 备份/替换 .app → 清除隔离属性 → 重启
+	scriptPath := filepath.Join(us.updateDir, fmt.Sprintf("update-darwin-%d.sh", time.Now().UnixNano()))
+	logFile := filepath.Join(us.updateDir, "update-darwin.log")
+	backupAppPath := targetAppPath + ".old"
+
+	bashScript := `#!/bin/bash
+set -euo pipefail
+
+PID="$1"
+TARGET_APP="$2"
+NEW_APP="$3"
+BACKUP_APP="$4"
+EXTRACT_DIR="$5"
+LOG_FILE="$6"
+
+log() {
+  echo "[update-darwin] $(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG_FILE"
+}
+
+trap 'rc=$?; log "script error, exit code=$rc"; exit $rc' ERR
+
+log "start update: pid=$PID target=$TARGET_APP new=$NEW_APP backup=$BACKUP_APP"
+
+# macOS PPID detection using ps
+get_ppid() {
+  ps -o ppid= -p "$$" 2>/dev/null | tr -d '[:space:]' || true
+}
+
+# Get initial PPID to verify parent-child relationship
+PPID_INIT="$(get_ppid)"
+USE_PPID_CHECK=0
+if [ -n "$PPID_INIT" ] && [ "$PPID_INIT" = "$PID" ]; then
+  USE_PPID_CHECK=1
+  log "PPID check enabled: initial ppid=$PPID_INIT matches target pid=$PID"
+else
+  log "PPID check disabled: initial ppid=${PPID_INIT:-unknown} != target pid=$PID, using kill -0 only"
+fi
+
+# Wait for main process to exit (max ~30 seconds)
+# Single loop: check both kill -0 and PPID change
+exit_ok=0
+for i in {1..300}; do
+  # Primary check: process no longer exists
+  if ! kill -0 "$PID" 2>/dev/null; then
+    exit_ok=1
+    log "main process exited (kill -0 failed)"
+    break
+  fi
+  # Secondary check: PPID changed (if enabled)
+  if [ "$USE_PPID_CHECK" -eq 1 ]; then
+    PPID_NOW="$(get_ppid)"
+    if [ -n "$PPID_NOW" ] && [ "$PPID_NOW" != "$PID" ]; then
+      exit_ok=1
+      log "main process exited (ppid changed: $PPID_INIT -> $PPID_NOW)"
+      break
+    fi
+  fi
+  sleep 0.1
+done
+
+if [ "$exit_ok" -ne 1 ]; then
+  log "timeout: main process did not exit after 30s"
+  exit 1
+fi
+
+sleep 0.5
+
+# backup old app
+if [ -d "$TARGET_APP" ]; then
+  log "backup old app to $BACKUP_APP"
+  rm -rf "$BACKUP_APP" 2>/dev/null || true
+  mv "$TARGET_APP" "$BACKUP_APP"
+fi
+
+# replace with new app
+log "replace new app to $TARGET_APP"
+if ! mv "$NEW_APP" "$TARGET_APP"; then
+  log "replace failed, rollback"
+  if [ -d "$BACKUP_APP" ]; then
+    mv "$BACKUP_APP" "$TARGET_APP" 2>/dev/null || true
+  fi
+  exit 1
+fi
+
+# remove quarantine attribute
+if command -v xattr >/dev/null 2>&1; then
+  log "remove quarantine attribute"
+  xattr -cr "$TARGET_APP" 2>/dev/null || log "remove quarantine failed (ignored)"
+fi
+
+log "relaunch app"
+if ! open -n -a "$TARGET_APP" >/dev/null 2>&1; then
+  log "warning: open command failed, app may not have launched"
+  log "backup preserved at: $BACKUP_APP"
+  exit 1
+fi
+log "relaunch ok"
+
+sleep 2
+rm -rf "$BACKUP_APP" 2>/dev/null || true
+log "cleanup backup"
+
+log "cleanup temp dir $EXTRACT_DIR"
+rm -rf "$EXTRACT_DIR" 2>/dev/null || true
+
+log "cleanup script $0"
+rm -f "$0" 2>/dev/null || true
+
+log "update completed"
+exit 0
+`
+
+	if err := os.WriteFile(scriptPath, []byte(bashScript), 0o755); err != nil {
+		_ = os.RemoveAll(extractDir)
+		return fmt.Errorf("写入更新脚本失败: %w", err)
+	}
+	if err := os.Chmod(scriptPath, 0o755); err != nil {
+		_ = os.RemoveAll(extractDir)
+		return fmt.Errorf("设置更新脚本执行权限失败: %w", err)
+	}
+
+	log.Printf("[UpdateService] 已创建 macOS 更新脚本: %s", scriptPath)
+
+	cmd := exec.Command(
+		"/bin/bash",
+		scriptPath,
+		fmt.Sprint(pid),
+		targetAppPath,
+		newAppPath,
+		backupAppPath,
+		extractDir,
+		logFile,
+	)
+	if err := cmd.Start(); err != nil {
+		_ = os.RemoveAll(extractDir)
+		return fmt.Errorf("启动更新脚本失败: %w", err)
+	}
+
+	log.Printf("[UpdateService] 更新脚本已启动 (PID=%d)，准备退出主程序...", cmd.Process.Pid)
+
+	us.clearPendingState()
+	us.releaseUpdateLock()
+
+	os.Exit(0)
 	return nil
 }
 
-// applyUpdateLinux Linux 平台更新（增强版）
+// findNewAppBundle 在解压目录中查找 .app 包
+// 优先策略：1) 同名优先 2) 浅层优先 3) 递归查找
+func findNewAppBundle(extractDir, preferredName string) (string, error) {
+	// 1. 根目录同名优先
+	if preferredName != "" {
+		candidate := filepath.Join(extractDir, preferredName)
+		if fi, err := os.Stat(candidate); err == nil && fi.IsDir() {
+			log.Printf("[UpdateService] 找到同名 .app: %s", candidate)
+			return candidate, nil
+		}
+	}
+
+	var candidates []string
+
+	// 2. 根目录直接 .app
+	entries, err := os.ReadDir(extractDir)
+	if err != nil {
+		return "", fmt.Errorf("读取解压目录失败: %w", err)
+	}
+
+	for _, e := range entries {
+		if e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".app") {
+			candidates = append(candidates, filepath.Join(extractDir, e.Name()))
+		}
+	}
+
+	// 3. 一层子目录内的 .app
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		subDir := filepath.Join(extractDir, e.Name())
+		subEntries, err := os.ReadDir(subDir)
+		if err != nil {
+			continue
+		}
+		for _, se := range subEntries {
+			if se.IsDir() && strings.HasSuffix(strings.ToLower(se.Name()), ".app") {
+				candidates = append(candidates, filepath.Join(subDir, se.Name()))
+			}
+		}
+	}
+
+	// 4. 兜底递归，遇到 .app 就停止深入（避免 helper app）
+	if len(candidates) == 0 {
+		filepath.WalkDir(extractDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() && strings.HasSuffix(strings.ToLower(d.Name()), ".app") {
+				candidates = append(candidates, path)
+				return filepath.SkipDir
+			}
+			return nil
+		})
+	}
+
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("解压后未找到新的 .app 包（目录=%s）", extractDir)
+	}
+
+	// 5. 选择策略：同名优先；否则选择最浅层（路径深度最小）
+	selected := candidates[0]
+	minDepth := strings.Count(strings.TrimPrefix(selected, extractDir), string(os.PathSeparator))
+
+	for _, cand := range candidates[1:] {
+		depth := strings.Count(strings.TrimPrefix(cand, extractDir), string(os.PathSeparator))
+		if depth < minDepth {
+			selected = cand
+			minDepth = depth
+		}
+	}
+
+	log.Printf("[UpdateService] 从 %d 个候选中选择: %s (深度=%d)", len(candidates), selected, minDepth)
+	return selected, nil
+}
+
+// applyUpdateLinux Linux 平台更新（脚本方式，避免 ETXTBSY）
 func (us *UpdateService) applyUpdateLinux(appImagePath string) error {
 	// 1. SHA256 校验
 	us.mu.Lock()
@@ -799,31 +1124,200 @@ func (us *UpdateService) applyUpdateLinux(appImagePath string) error {
 	if err != nil {
 		return fmt.Errorf("获取当前可执行文件路径失败: %w", err)
 	}
-	currentExe, _ = filepath.EvalSymlinks(currentExe)
-
-	// 4. 带时间戳的备份（保留最近 2 个）
-	timestamp := time.Now().Format("20060102-150405")
-	backupPath := currentExe + ".backup-" + timestamp
-	if err := copyUpdateFile(currentExe, backupPath); err != nil {
-		log.Printf("[UpdateService] 备份失败（继续）: %v", err)
+	if resolved, err := filepath.EvalSymlinks(currentExe); err == nil {
+		currentExe = resolved
 	}
 
-	// 5. 替换可执行文件
-	if err := copyUpdateFile(appImagePath, currentExe); err != nil {
-		// 尝试恢复
-		_ = copyUpdateFile(backupPath, currentExe)
-		return fmt.Errorf("替换失败: %w", err)
+	// AppImage 运行时 os.Executable() 返回 /tmp/.mount_* 内部路径
+	// 仅当检测到 AppImage 挂载特征时才信任 APPIMAGE 环境变量
+	targetExe := currentExe
+	appimageEnv := strings.TrimSpace(os.Getenv("APPIMAGE"))
+	isAppImageMount := strings.Contains(currentExe, "/.mount_") // 支持 $TMPDIR 不同于 /tmp 的情况
+
+	if isAppImageMount && appimageEnv != "" && filepath.IsAbs(appimageEnv) {
+		// 确保 APPIMAGE 不指向挂载内部（避免误覆盖内层文件）
+		if !strings.Contains(appimageEnv, "/.mount_") {
+			if resolved, err := filepath.EvalSymlinks(appimageEnv); err == nil {
+				appimageEnv = resolved
+			}
+			// 解析 symlink 后再次检查是否指向挂载内部
+			if strings.Contains(appimageEnv, "/.mount_") {
+				log.Printf("[UpdateService] APPIMAGE 解析后指向挂载内部，忽略: %s", appimageEnv)
+			} else if fi, statErr := os.Stat(appimageEnv); statErr == nil && !fi.IsDir() {
+				log.Printf("[UpdateService] 检测到 AppImage 挂载，使用 APPIMAGE 作为更新目标: %s (内部路径=%s)", appimageEnv, currentExe)
+				targetExe = appimageEnv
+			} else {
+				log.Printf("[UpdateService] APPIMAGE 无效 (%v)，回退使用内部路径: %s", statErr, currentExe)
+			}
+		} else {
+			log.Printf("[UpdateService] APPIMAGE 指向挂载内部，忽略: %s", appimageEnv)
+		}
+	} else if isAppImageMount {
+		log.Printf("[UpdateService] 检测到 AppImage 挂载但 APPIMAGE 未设置或无效，使用内部路径: %s", currentExe)
 	}
 
-	// 6. 设置可执行权限
-	if err := os.Chmod(currentExe, 0o755); err != nil {
-		return fmt.Errorf("设置执行权限失败: %w", err)
+	pid := os.Getpid()
+	parentDir := filepath.Dir(targetExe)
+
+	// 4. 检查目标目录可写
+	testFile := filepath.Join(parentDir, fmt.Sprintf(".updateservice-write-test-%d", pid))
+	if err := os.WriteFile(testFile, []byte("test"), 0o644); err != nil {
+		log.Printf("[UpdateService] 目标目录不可写: %s, err=%v", parentDir, err)
+		return fmt.Errorf("目标目录不可写，无法自动更新到 %s，请手动替换或使用管理员权限", parentDir)
+	}
+	_ = os.Remove(testFile)
+
+	// 5. 构建 bash 脚本
+	scriptPath := filepath.Join(us.updateDir, fmt.Sprintf("update-linux-%d.sh", time.Now().UnixNano()))
+	logFile := filepath.Join(us.updateDir, "update-linux.log")
+	backupPath := targetExe + ".old"
+
+	bashScript := `#!/bin/bash
+set -euo pipefail
+
+PID="$1"
+TARGET_EXE="$2"
+NEW_EXE="$3"
+BACKUP_EXE="$4"
+LOG_FILE="$5"
+
+log() {
+  echo "[update-linux] $(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG_FILE"
+}
+
+trap 'rc=$?; log "script error, exit code=$rc"; exit $rc' ERR
+
+log "start update: pid=$PID target=$TARGET_EXE new=$NEW_EXE backup=$BACKUP_EXE"
+
+# Linux-specific PPID detection using /proc (more reliable than ps -o)
+get_ppid() {
+  if [ -r "/proc/$$/stat" ]; then
+    # /proc/$$/stat format: pid (comm) state ppid ...
+    # comm may contain spaces/parens, so we strip everything up to ") " first
+    local stat_content
+    stat_content="$(cat /proc/$$/stat 2>/dev/null || true)"
+    if [ -n "$stat_content" ]; then
+      # Remove "pid (comm) " prefix, then get first field (state), second is ppid
+      local after_comm="${stat_content#*) }"
+      echo "$after_comm" | cut -d' ' -f2
+      return
+    fi
+  fi
+  # Fallback to ps
+  ps -o ppid= -p "$$" 2>/dev/null | tr -d '[:space:]' || true
+}
+
+# Get initial PPID to verify parent-child relationship
+PPID_INIT="$(get_ppid)"
+USE_PPID_CHECK=0
+if [ -n "$PPID_INIT" ] && [ "$PPID_INIT" = "$PID" ]; then
+  USE_PPID_CHECK=1
+  log "PPID check enabled: initial ppid=$PPID_INIT matches target pid=$PID"
+else
+  log "PPID check disabled: initial ppid=${PPID_INIT:-unknown} != target pid=$PID, using kill -0 only"
+fi
+
+# Wait for main process to exit (max ~30 seconds)
+# Single loop: check both kill -0 and PPID change
+exit_ok=0
+for i in {1..300}; do
+  # Primary check: process no longer exists
+  if ! kill -0 "$PID" 2>/dev/null; then
+    exit_ok=1
+    log "main process exited (kill -0 failed)"
+    break
+  fi
+  # Secondary check: PPID changed (if enabled)
+  if [ "$USE_PPID_CHECK" -eq 1 ]; then
+    PPID_NOW="$(get_ppid)"
+    if [ -n "$PPID_NOW" ] && [ "$PPID_NOW" != "$PID" ]; then
+      exit_ok=1
+      log "main process exited (ppid changed: $PPID_INIT -> $PPID_NOW)"
+      break
+    fi
+  fi
+  sleep 0.1
+done
+
+if [ "$exit_ok" -ne 1 ]; then
+  log "timeout: main process did not exit after 30s"
+  exit 1
+fi
+
+sleep 0.5
+
+# backup old executable
+if [ -f "$TARGET_EXE" ]; then
+  log "backup old executable to $BACKUP_EXE"
+  rm -f "$BACKUP_EXE" 2>/dev/null || true
+  mv "$TARGET_EXE" "$BACKUP_EXE"
+fi
+
+# copy new executable (mv may fail across filesystems)
+log "copy new executable to $TARGET_EXE"
+if ! cp "$NEW_EXE" "$TARGET_EXE"; then
+  log "copy failed, rollback"
+  if [ -f "$BACKUP_EXE" ]; then
+    mv "$BACKUP_EXE" "$TARGET_EXE" 2>/dev/null || true
+  fi
+  exit 1
+fi
+
+# set executable permission
+chmod 755 "$TARGET_EXE"
+
+sleep 2
+rm -f "$BACKUP_EXE" 2>/dev/null || true
+rm -f "$NEW_EXE" 2>/dev/null || true
+
+log "relaunch app"
+nohup "$TARGET_EXE" >/dev/null 2>&1 &
+
+log "cleanup script $0"
+rm -f "$0" 2>/dev/null || true
+
+log "update completed"
+exit 0
+`
+
+	if err := os.WriteFile(scriptPath, []byte(bashScript), 0o755); err != nil {
+		return fmt.Errorf("写入更新脚本失败: %w", err)
+	}
+	if err := os.Chmod(scriptPath, 0o755); err != nil {
+		return fmt.Errorf("设置更新脚本执行权限失败: %w", err)
 	}
 
-	// 7. 清理旧备份（保留最近 2 个）
-	us.cleanupOldBackups(filepath.Dir(currentExe), "*.backup-*", 2)
+	log.Printf("[UpdateService] 已创建 Linux 更新脚本: %s", scriptPath)
 
-	log.Println("[UpdateService] Linux 更新应用成功")
+	// 查找 bash 路径（兼容 NixOS 等非标准 FHS 发行版）
+	bashPath, lookErr := exec.LookPath("bash")
+	if lookErr != nil {
+		bashPath = "/bin/bash" // 兼容旧系统的默认路径
+	}
+	if _, statErr := os.Stat(bashPath); statErr != nil {
+		return fmt.Errorf("未找到 bash（需要 bash 执行更新脚本），请手动替换 AppImage")
+	}
+	log.Printf("[UpdateService] 使用 bash: %s", bashPath)
+
+	cmd := exec.Command(
+		bashPath,
+		scriptPath,
+		fmt.Sprint(pid),
+		targetExe,
+		appImagePath,
+		backupPath,
+		logFile,
+	)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("启动更新脚本失败: %w", err)
+	}
+
+	log.Printf("[UpdateService] 更新脚本已启动 (PID=%d)，准备退出主程序...", cmd.Process.Pid)
+
+	us.clearPendingState()
+	us.releaseUpdateLock()
+
+	os.Exit(0)
 	return nil
 }
 
@@ -895,8 +1389,27 @@ func (us *UpdateService) RestartApp() error {
 func (us *UpdateService) StartDailyCheck() {
 	us.StopDailyCheck()
 
+	us.mu.Lock()
+	enabled := us.autoCheckEnabled
+	us.mu.Unlock()
+
+	if !enabled {
+		log.Println("[UpdateService] 自动检查已禁用，不启动定时器")
+		return
+	}
+
 	duration := us.calculateNextCheckDuration()
 	us.dailyCheckTimer = time.AfterFunc(duration, func() {
+		// 检查是否仍然启用
+		us.mu.Lock()
+		enabled := us.autoCheckEnabled
+		us.mu.Unlock()
+
+		if !enabled {
+			log.Println("[UpdateService] 自动检查已禁用，跳过本次检查")
+			return
+		}
+
 		us.performDailyCheck()
 		us.StartDailyCheck() // 重新调度下次检查
 	})
@@ -1096,12 +1609,43 @@ func (us *UpdateService) LoadState() error {
 		return fmt.Errorf("解析状态失败: %w", err)
 	}
 
+	// 预先检查 pending 标记文件，避免在持锁状态下做文件 IO
+	pendingFile := filepath.Join(filepath.Dir(us.stateFile), ".pending-update")
+	pendingExists := false
+	if _, err := os.Stat(pendingFile); err == nil {
+		pendingExists = true
+	} else if err != nil && !os.IsNotExist(err) {
+		// 其他错误（权限/IO 等）时保守处理为不存在，避免误显示 Ready
+		log.Printf("[UpdateService] 检查 pending 标记失败: %v，将视为无待更新", err)
+	}
+
+	needSave := false
+
 	us.mu.Lock()
 	us.lastCheckTime = state.LastCheckTime
 	us.checkFailures = state.ConsecutiveFailures
 	us.latestVersion = state.LatestKnownVersion
 	us.downloadProgress = state.DownloadProgress
-	us.updateReady = state.UpdateReady
+
+	// 验证 updateReady 状态：pending 文件才是权威来源
+	switch {
+	case state.UpdateReady && !pendingExists:
+		// 状态文件显示 updateReady=true 但实际没有待更新文件，重置状态
+		log.Printf("[UpdateService] 检测到过期的 updateReady 状态，重置为 false")
+		us.updateReady = false
+		us.downloadProgress = 0
+		needSave = true
+	case !state.UpdateReady && pendingExists:
+		// pending 文件存在但状态为 false（可能是上次 SaveState 失败），修正为 true
+		log.Printf("[UpdateService] 检测到 pending 标记存在但状态为 false，修正为 true")
+		us.updateReady = true
+		if us.downloadProgress < 100 {
+			us.downloadProgress = 100
+		}
+		needSave = true
+	default:
+		us.updateReady = state.UpdateReady
+	}
 
 	// 检查文件中是否包含 auto_check_enabled 字段
 	// 如果包含，使用文件中的值；否则保持默认值 true（兼容老版本）
@@ -1112,6 +1656,11 @@ func (us *UpdateService) LoadState() error {
 	}
 	// 否则保持初始化时设置的默认值 true
 	us.mu.Unlock()
+
+	// 如果状态被修正，保存修正后的状态（需要在 unlock 后调用，避免死锁）
+	if needSave {
+		_ = us.SaveState()
+	}
 
 	return nil
 }
@@ -1384,31 +1933,44 @@ func (us *UpdateService) applyInstalledUpdate(newExePath string) error {
 	log.Printf("[UpdateService] 已创建更新任务: %s", taskFile)
 	log.Printf("[UpdateService] 任务配置: PID=%d, Timeout=%ds", os.Getpid(), timeout)
 
-	// 4. 清理更新状态
-	us.clearPendingState()
-
-	// 5. 使用 PowerShell 以管理员权限启动 updater.exe
+	// 4. 使用 PowerShell 以管理员权限启动 updater.exe
 	// Start-Process -Verb RunAs 会触发 UAC 弹窗
+	// 注意：-ArgumentList 需要用双引号包裹路径，防止空格路径被拆分
 	log.Printf("[UpdateService] 使用 UAC 提权启动更新器: %s", updaterPath)
 	cmd := exec.Command("powershell.exe",
+		"-NoProfile", "-NonInteractive",
 		"-ExecutionPolicy", "Bypass",
+		"-WindowStyle", "Hidden",
 		"-Command",
-		fmt.Sprintf(`Start-Process -FilePath '%s' -ArgumentList '%s' -Verb RunAs -WindowStyle Hidden`,
+		fmt.Sprintf(`Start-Process -FilePath '%s' -ArgumentList ('"%s"') -Verb RunAs -WindowStyle Hidden`,
 			strings.ReplaceAll(updaterPath, `'`, `''`),
 			strings.ReplaceAll(taskFile, `'`, `''`),
 		),
 	)
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("启动 UAC 提权更新器失败: %w", err)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		outStr := strings.ToLower(string(out))
+		// 兼容中英文提示，识别 UAC 取消
+		if strings.Contains(outStr, "canceled by the user") ||
+			strings.Contains(outStr, "cancelled by the user") ||
+			strings.Contains(outStr, "operation was canceled") ||
+			strings.Contains(outStr, "取消") {
+			log.Printf("[UpdateService] 用户取消 UAC，输出: %s", strings.TrimSpace(string(out)))
+			return ErrUACDenied
+		}
+		return fmt.Errorf("启动 UAC 提权更新器失败: %w, 输出: %s", err, strings.TrimSpace(string(out)))
 	}
 
-	log.Printf("[UpdateService] UAC 提权请求已发送，准备退出主程序...")
+	// UAC 已确认，真正进入更新流程后再清理 pending
+	us.clearPendingState()
 
-	// 6. 释放更新锁
+	log.Printf("[UpdateService] UAC 提权请求已确认，准备退出主程序...")
+
+	// 5. 释放更新锁
 	us.releaseUpdateLock()
 
-	// 7. 退出主程序
+	// 6. 退出主程序
 	os.Exit(0)
 	return nil
 }

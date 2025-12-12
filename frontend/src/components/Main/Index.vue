@@ -986,6 +986,7 @@ import { getCurrentTheme, setTheme, type ThemeMode } from '../../utils/ThemeMana
 import { useRouter } from 'vue-router'
 import { fetchConfigImportStatus, importFromCcSwitch, isFirstRun, markFirstRunDone, type ConfigImportStatus } from '../../services/configImport'
 import { showToast } from '../../utils/toast'
+import { extractErrorMessage } from '../../utils/error'
 import { getBlacklistStatus, manualUnblock, type BlacklistStatus } from '../../services/blacklist'
 import { saveCLIConfig, type CLIPlatform } from '../../services/cliConfig'
 import {
@@ -2301,7 +2302,7 @@ const handleTestConnectivity = async () => {
   } catch (error) {
     connectivityTestResult.value = {
       success: false,
-      message: t('components.main.form.connectivity.error', { error: String(error) })
+      message: t('components.main.form.connectivity.error', { error: extractErrorMessage(error) })
     }
   } finally {
     testingConnectivity.value = false

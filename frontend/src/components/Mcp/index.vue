@@ -302,13 +302,13 @@
         <!-- JSON 输入区 -->
         <div v-if="!jsonParseResult" class="json-input-area">
           <!-- 说明 + 示例按钮 -->
-          <div class="flex items-center justify-between mb-3">
-            <span class="text-sm text-[var(--mac-text-secondary)]">
+          <div class="json-header-row">
+            <span class="json-hint-text">
               {{ t('components.mcp.jsonImport.jsonHint') }}
             </span>
             <button
               type="button"
-              class="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+              class="json-example-btn"
               @click="fillExampleJson"
             >
               {{ t('components.mcp.jsonImport.loadExample') }}
@@ -316,10 +316,10 @@
           </div>
 
           <!-- 格式说明 -->
-          <div class="text-xs text-[var(--mac-text-secondary)] bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg mb-3 space-y-1">
-            <div>✅ Claude Desktop: <code class="px-1 bg-white dark:bg-gray-800 rounded">{"mcpServers": {"name": {...}}}</code></div>
-            <div>✅ {{ t('components.mcp.jsonImport.formatSingle') }}: <code class="px-1 bg-white dark:bg-gray-800 rounded">{"command": "...", "args": [...]}</code></div>
-            <div>✅ {{ t('components.mcp.jsonImport.formatArray') }}: <code class="px-1 bg-white dark:bg-gray-800 rounded">[{...}, {...}]</code></div>
+          <div class="json-format-hint">
+            <div>✅ Claude Desktop: <code class="json-code-inline">{"mcpServers": {"name": {...}}}</code></div>
+            <div>✅ {{ t('components.mcp.jsonImport.formatSingle') }}: <code class="json-code-inline">{"command": "...", "args": [...]}</code></div>
+            <div>✅ {{ t('components.mcp.jsonImport.formatArray') }}: <code class="json-code-inline">[{...}, {...}]</code></div>
           </div>
 
           <label class="form-field">
@@ -345,9 +345,9 @@
         </div>
 
         <!-- 解析结果预览 -->
-        <div v-else class="json-preview-area">
+        <div v-if="jsonParseResult" class="json-preview-area">
           <div class="preview-header">
-            <span class="preview-count">{{ t('components.mcp.jsonImport.serverCount', { count: jsonParseResult.servers.length }) }}</span>
+            <span class="preview-count">{{ t('components.mcp.jsonImport.serverCount', { count: jsonParseResult?.servers?.length ?? 0 }) }}</span>
             <button type="button" class="ghost-icon sm" @click="resetJsonImport" :title="t('components.mcp.jsonImport.reset')">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M6 6l12 12M6 18L18 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
@@ -356,8 +356,8 @@
           </div>
 
           <!-- 冲突警告 -->
-          <div v-if="jsonParseResult.conflicts.length > 0" class="conflict-warning">
-            <p>{{ t('components.mcp.jsonImport.conflictWarning', { names: jsonParseResult.conflicts.join(', ') }) }}</p>
+          <div v-if="(jsonParseResult?.conflicts?.length ?? 0) > 0" class="conflict-warning">
+            <p>{{ t('components.mcp.jsonImport.conflictWarning', { names: jsonParseResult?.conflicts?.join(', ') ?? '' }) }}</p>
             <div class="conflict-actions">
               <BaseButton variant="outline" size="sm" @click="handleBatchImport('skip')">
                 {{ t('components.mcp.jsonImport.conflictSkip') }}
@@ -373,7 +373,7 @@
 
           <!-- 服务器列表预览 -->
           <div class="preview-list">
-            <div v-for="server in jsonParseResult.servers" :key="server.name" class="preview-item">
+            <div v-for="server in (jsonParseResult?.servers ?? [])" :key="server.name" class="preview-item">
               <div class="preview-item-header">
                 <span class="preview-item-name">{{ server.name || t('components.mcp.jsonImport.unnamed') }}</span>
                 <span class="preview-item-type">{{ server.type }}</span>
@@ -389,7 +389,7 @@
               {{ t('components.mcp.form.actions.cancel') }}
             </BaseButton>
             <BaseButton
-              v-if="jsonParseResult.conflicts.length === 0"
+              v-if="(jsonParseResult?.conflicts?.length ?? 0) === 0"
               :disabled="saveBusy"
               @click="handleBatchImport('skip')"
             >
@@ -1196,6 +1196,70 @@ onMounted(() => {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.5);
   margin: 0;
+}
+
+/* JSON 导入 header 行 */
+.json-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.json-hint-text {
+  font-size: 14px;
+  color: var(--mac-text-secondary);
+}
+
+.json-example-btn {
+  font-size: 14px;
+  color: #2563eb;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.json-example-btn:hover {
+  color: #1d4ed8;
+}
+
+:global(.dark) .json-example-btn {
+  color: #60a5fa;
+}
+
+:global(.dark) .json-example-btn:hover {
+  color: #93c5fd;
+}
+
+/* JSON 格式说明 */
+.json-format-hint {
+  font-size: 12px;
+  color: var(--mac-text-secondary);
+  background: rgba(59, 130, 246, 0.08);
+  padding: 0.75rem;
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+:global(.dark) .json-format-hint {
+  background: rgba(30, 58, 138, 0.2);
+}
+
+.json-code-inline {
+  padding: 0 0.25rem;
+  background: var(--mac-surface);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+:global(.dark) .json-code-inline {
+  background: rgba(31, 41, 55, 0.8);
 }
 
 /* 解析结果预览 */

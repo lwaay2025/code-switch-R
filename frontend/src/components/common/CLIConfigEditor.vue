@@ -247,6 +247,7 @@
                   <button
                     type="button"
                     class="cli-action-btn cli-primary-btn"
+                    :disabled="previewSaving"
                     @click="handleApplyPreviewEdit(file, index)"
                   >
                     {{ t('components.cliConfig.previewApply') }}
@@ -254,6 +255,7 @@
                   <button
                     type="button"
                     class="cli-action-btn"
+                    :disabled="previewSaving"
                     @click="handleResetPreviewEdit(file, index)"
                   >
                     {{ t('components.cliConfig.previewReset') }}
@@ -284,6 +286,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   fetchCLIConfig,
+  saveCLIConfigFileContent,
   fetchCLITemplate,
   setCLITemplate,
   restoreDefaultConfig,
@@ -293,6 +296,7 @@ import {
   type CLIConfigFile,
 } from '../../services/cliConfig'
 import { showToast } from '../../utils/toast'
+import { extractErrorMessage } from '../../utils/error'
 
 const props = defineProps<{
   platform: CLIPlatform
@@ -313,6 +317,7 @@ const isGlobalTemplate = ref(false)
 const customFields = ref<Array<{ key: string; value: string }>>([])
 const previewExpanded = ref(false)
 const previewEditable = ref(false)
+const previewSaving = ref(false)
 const editingContent = ref<Record<string, string>>({})
 const previewErrors = ref<Record<string, string>>({})
 
@@ -349,18 +354,43 @@ const editableFields = computed(() => {
 // 配置文件预览列表
 const previewFiles = computed((): CLIConfigFile[] => {
   if (!config.value) return []
-  if (config.value.rawFiles && config.value.rawFiles.length > 0) {
-    return config.value.rawFiles
+
+  const rawFiles = config.value.rawFiles || []
+  const primaryPath = config.value.filePath || ''
+  const primaryFormat = config.value.configFormat
+  const files: CLIConfigFile[] = []
+
+  // 始终把主配置文件放在第一个；即使文件不存在，也给出占位项，便于在预览区创建/编辑
+  if (primaryPath) {
+    const existingPrimary = rawFiles.find(f => f.path === primaryPath)
+    if (existingPrimary) {
+      files.push(existingPrimary)
+    } else {
+      files.push({
+        path: primaryPath,
+        format: primaryFormat,
+        content: config.value.rawContent || '',
+      })
+    }
   }
-  // 回退兼容：使用 rawContent
-  if (config.value.rawContent) {
-    return [{
+
+  // 追加其他文件（如 Codex 的 auth.json）
+  rawFiles.forEach(f => {
+    if (!primaryPath || f.path !== primaryPath) {
+      files.push(f)
+    }
+  })
+
+  // 回退兼容：老后端可能只有 rawContent
+  if (files.length === 0 && config.value.rawContent) {
+    files.push({
       path: config.value.filePath || '',
       format: config.value.configFormat,
       content: config.value.rawContent,
-    }]
+    })
   }
-  return []
+
+  return files
 })
 
 // 获取字段值，支持嵌套的 env.* 字段
@@ -781,20 +811,39 @@ const initPreviewEditing = () => {
 }
 
 // 应用预览编辑
-const handleApplyPreviewEdit = (file: CLIConfigFile, index: number) => {
+const handleApplyPreviewEdit = async (file: CLIConfigFile, index: number) => {
   const key = getPreviewKey(file, index)
   const text = editingContent.value[key] ?? file.content ?? ''
 
-  const parsed = parseSmartConfig(text)
-  if (!parsed || Object.keys(parsed.data).length === 0) {
-    previewErrors.value[key] = t('components.cliConfig.previewParseError')
-    showToast(t('components.cliConfig.previewParseError'), 'error')
+  if (!file.path) {
+    previewErrors.value[key] = t('components.cliConfig.previewUnknownPath')
+    showToast(t('components.cliConfig.previewUnknownPath'), 'error')
     return
   }
 
-  applyParsedConfig(parsed.data)
-  delete previewErrors.value[key]
-  showToast(t('components.cliConfig.previewApplySuccess'), 'success')
+  previewSaving.value = true
+  try {
+    await saveCLIConfigFileContent(props.platform, file.path, text)
+    // 重新拉取，让预览展示真实落盘内容（含后端强制写入的锁定字段）
+    config.value = await fetchCLIConfig(props.platform)
+    // 同步 editableValues 到新配置，避免表单状态不一致
+    editableValues.value = { ...(config.value?.editable || {}) }
+    // 提取自定义字段（防止预览保存覆盖了自定义字段后表单丢失）
+    extractCustomFields()
+    // 通知父组件（避免后续表单提交覆盖预览保存的内容）
+    emitChanges()
+    // 仅重置当前文件的预览内容，保留其他文件的未保存编辑
+    editingContent.value[key] = previewFiles.value.find((f, i) => getPreviewKey(f, i) === key)?.content || ''
+    delete previewErrors.value[key]
+    showToast(t('components.cliConfig.previewApplySuccess'), 'success')
+  } catch (error) {
+    console.error('Failed to save preview content:', error)
+    const errorMsg = extractErrorMessage(error, t('components.cliConfig.loadError'))
+    previewErrors.value[key] = errorMsg
+    showToast(errorMsg, 'error')
+  } finally {
+    previewSaving.value = false
+  }
 }
 
 // 还原预览编辑

@@ -50,6 +50,15 @@ export async function saveCLIConfig(platform: CLIPlatform, editable: Record<stri
   return Call.ByName(`${SERVICE_PATH}.SaveConfig`, platform, editable)
 }
 
+// 保存指定配置文件内容（预览区高级编辑）
+export async function saveCLIConfigFileContent(
+  platform: CLIPlatform,
+  filePath: string,
+  content: string
+): Promise<void> {
+  return Call.ByName(`${SERVICE_PATH}.SaveConfigFileContent`, platform, filePath, content)
+}
+
 // 获取指定平台的全局模板
 export async function fetchCLITemplate(platform: CLIPlatform): Promise<CLITemplate> {
   return Call.ByName(`${SERVICE_PATH}.GetTemplate`, platform)
