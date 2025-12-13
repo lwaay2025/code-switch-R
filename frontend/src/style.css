@@ -1386,6 +1386,14 @@ html.dark .ghost-icon:hover {
   backdrop-filter: blur(6px);
 }
 
+.modal-overlay-noevent {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
 .modal-wrapper {
   position: relative;
   z-index: 1;

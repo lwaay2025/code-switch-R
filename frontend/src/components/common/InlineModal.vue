@@ -1,8 +1,8 @@
 <template>
   <Transition name="modal-fade">
-    <div v-if="open" class="modal-backdrop" role="presentation">
-      <div class="modal-overlay" aria-hidden="true"></div>
-      <div class="modal-wrapper" @click.self="emitClose">
+    <div v-if="open" class="modal-backdrop" role="presentation" @click.self="emitClose">
+      <div class="modal-overlay-noevent"></div>
+      <div class="modal-wrapper">
         <Transition name="modal-slide" appear>
           <div
             v-if="open"
