@@ -178,7 +178,7 @@
       </section>
     </div>
 
-    <BaseModal
+    <InlineModal
       :open="modalState.open"
       :title="modalState.editingName ? t('components.mcp.form.editTitle') : t('components.mcp.form.createTitle')"
       @close="closeModal"
@@ -325,6 +325,7 @@
           <label class="form-field">
             <span>{{ t('components.mcp.jsonImport.inputLabel') }}</span>
             <BaseTextarea
+              ref="jsonTextareaRef"
               v-model="jsonInput"
               :placeholder="t('components.mcp.jsonImport.inputPlaceholder')"
               :disabled="jsonParsing"
@@ -399,9 +400,9 @@
         </div>
       </div>
       </div>
-    </BaseModal>
+    </InlineModal>
 
-    <BaseModal
+    <InlineModal
       :open="confirmState.open"
       :title="t('components.mcp.form.deleteTitle')"
       variant="confirm"
@@ -420,16 +421,16 @@
           {{ t('components.mcp.form.actions.delete') }}
         </BaseButton>
       </footer>
-    </BaseModal>
+    </InlineModal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import BaseButton from '../common/BaseButton.vue'
-import BaseModal from '../common/BaseModal.vue'
+import InlineModal from '../common/InlineModal.vue'
 import BaseInput from '../common/BaseInput.vue'
 import BaseTextarea from '../common/BaseTextarea.vue'
 import {
@@ -500,13 +501,34 @@ const modalState = reactive({
   form: createEmptyForm(),
 })
 
-// JSON 导入模式相关状态
+// JSON 导入状态
 type ModalMode = 'form' | 'json'
 const modalMode = ref<ModalMode>('form')
 const jsonInput = ref('')
 const jsonParsing = ref(false)
 const jsonError = ref('')
 const jsonParseResult = ref<MCPParseResult | null>(null)
+
+// JSON textarea 引用与自动聚焦（修复 macOS WebView 输入问题）
+type BaseTextareaHandle = { focus: () => void }
+const jsonTextareaRef = ref<BaseTextareaHandle | null>(null)
+
+const focusJsonTextarea = () => {
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      jsonTextareaRef.value?.focus()
+    })
+  })
+}
+
+watch(
+  [() => modalState.open, modalMode, jsonParseResult, jsonParsing],
+  ([open, mode, result, parsing]) => {
+    if (!open || mode !== 'json' || result !== null || parsing) return
+    focusJsonTextarea()
+  },
+  { flush: 'post' }
+)
 
 const confirmState = reactive<{ open: boolean; target: McpServer | null }>({
   open: false,
