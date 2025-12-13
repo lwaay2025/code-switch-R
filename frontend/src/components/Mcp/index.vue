@@ -650,6 +650,9 @@ const openCreateModal = () => {
   modalState.editingName = ''
   modalState.form = createEmptyForm()
   modalError.value = ''
+  // 重置模式和 JSON 导入状态
+  modalMode.value = 'form'
+  resetJsonImport()
 }
 
 const openEditModal = (server: McpServer) => {
@@ -667,6 +670,9 @@ const openEditModal = (server: McpServer) => {
     envEntries: buildEnvEntries(server.env),
     enablePlatform: [...(server.enable_platform ?? [])],
   }
+  // 重置模式和 JSON 导入状态（编辑模式应该从表单开始）
+  modalMode.value = 'form'
+  resetJsonImport()
 }
 
 const closeModal = () => {
@@ -686,6 +692,10 @@ const switchModalMode = (mode: ModalMode) => {
   modalMode.value = mode
   jsonError.value = ''
   modalError.value = ''
+  // 切到 JSON 模式时，确保清除预览结果，显示输入界面
+  if (mode === 'json') {
+    jsonParseResult.value = null
+  }
 }
 
 // 填充示例 JSON
