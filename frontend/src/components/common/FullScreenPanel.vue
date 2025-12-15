@@ -9,7 +9,7 @@
         aria-modal="true"
         :aria-labelledby="titleId"
         tabindex="-1"
-        @keydown.capture="onKeyDown"
+        @keydown="onKeyDown"
       >
         <!-- Header -->
         <header class="panel-header">
@@ -67,9 +67,20 @@ const handleClose = () => {
   emit('close')
 }
 
+const isEditableTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) return false
+  const tagName = target.tagName
+  if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT') return true
+  return target.isContentEditable
+}
+
 const onKeyDown = (e: KeyboardEvent) => {
   if (!props.open) return
   if (e.key !== 'Escape') return
+  if (e.isComposing) return
+
+  // Esc 可能来自下拉框/输入法等内部交互；此类情况优先交给控件自身处理，避免误关闭面板
+  if (isEditableTarget(e.target)) return
 
   // 只在焦点位于面板内部时才响应 Esc，避免 WebView 异常事件误触发关闭
   const panelEl = panelRef.value
