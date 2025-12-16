@@ -147,6 +147,7 @@ const conflictCount = computed(() => conflictNames.value.length)
 watch(
   () => props.open,
   (isOpen) => {
+    showToast(`[DEBUG] BatchImportModal watch: open=${isOpen}`, 'warning')
     if (isOpen) {
       resetState()
       nextTick(() => textareaRef.value?.focus())
