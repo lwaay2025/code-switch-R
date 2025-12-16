@@ -560,6 +560,31 @@
         "refresh": "刷新列表",
         "create": "新增服务器"
       },
+      "import": {
+        "title": "批量导入 MCP 服务器",
+        "inputDesc": "粘贴 MCP 配置 JSON，支持 Claude Desktop 格式、数组格式或服务器映射格式。",
+        "placeholder": "{\n  \"mcpServers\": {\n    \"server-name\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@modelcontextprotocol/server-xxx\"]\n    }\n  }\n}",
+        "next": "下一步",
+        "parsing": "解析中...",
+        "back": "上一步",
+        "reviewTitle": "共解析 {count} 个服务器",
+        "selectAll": "全选",
+        "conflictNotice": "{count} 个服务器与现有配置冲突",
+        "strategySkip": "跳过冲突",
+        "strategyOverwrite": "覆盖现有",
+        "status": {
+          "new": "新增",
+          "conflict": "冲突"
+        },
+        "submit": "导入 {count} 个",
+        "importing": "导入中...",
+        "success": "成功导入 {count} 个 MCP 服务器",
+        "allSkipped": "所有服务器均已跳过，未导入任何内容",
+        "noServers": "未找到有效的服务器配置",
+        "needName": "单服务器配置需要提供名称",
+        "parseError": "JSON 解析失败",
+        "importError": "导入失败，请重试"
+      },
       "section": {
         "title": "已注册服务器",
         "subtitle": "数据来自 ~/.code-switch/mcp.json，修改后立即保存"
@@ -651,32 +676,6 @@
         },
         "deleteTitle": "删除 MCP 服务器",
         "deleteMessage": "确认删除 {name} 吗？操作不可撤销"
-      },
-      "jsonImport": {
-        "tabForm": "表单填写",
-        "tabBulkImport": "批量导入",
-        "jsonHint": "支持 Claude Desktop、数组、单对象等多种格式",
-        "loadExample": "加载示例",
-        "formatSingle": "单对象",
-        "formatArray": "数组",
-        "inputLabel": "粘贴 MCP 配置 JSON",
-        "inputPlaceholder": "支持 Claude Desktop 格式、数组格式或单服务器格式...",
-        "formatHint": "支持格式：{\"mcpServers\": {...}}、[{...}] 或 {\"command\": ...}",
-        "parse": "解析",
-        "parsing": "解析中...",
-        "emptyInput": "请输入 JSON 内容",
-        "parseError": "JSON 解析失败",
-        "fillForm": "已填充表单，请补充服务器名称",
-        "serverCount": "共 {count} 个服务器",
-        "reset": "重新输入",
-        "unnamed": "未命名",
-        "importAll": "全部导入",
-        "importSuccess": "成功导入 {count} 个 MCP 服务器",
-        "importError": "导入失败，请重试",
-        "conflictWarning": "以下服务器已存在：{names}",
-        "conflictSkip": "跳过冲突",
-        "conflictOverwrite": "覆盖现有",
-        "conflictRename": "重命名导入"
       }
     },
     "gemini": {

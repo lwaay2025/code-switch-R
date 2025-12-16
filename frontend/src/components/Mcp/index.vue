@@ -82,6 +82,18 @@
                 />
               </svg>
             </button>
+            <button class="ghost-icon" :aria-label="t('components.mcp.import.title')" @click="openBatchImport">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 4v12m0 0l-4-4m4 4l4-4"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  fill="none"
+                />
+              </svg>
+            </button>
           </div>
         </div>
 
@@ -184,31 +196,7 @@
       :title="modalState.editingName ? t('components.mcp.form.editTitle') : t('components.mcp.form.createTitle')"
       @close="closeModal"
     >
-      <!-- Tab 切换（FullScreenPanel 已通过 @click.stop 隔离事件，此处无需 .stop） -->
-      <div class="panel-tabs" role="tablist">
-        <button
-          type="button"
-          class="panel-tab"
-          :class="{ active: modalMode === 'form' }"
-          role="tab"
-          :aria-selected="modalMode === 'form'"
-          @click="switchModalMode('form')"
-        >
-          {{ t('components.mcp.jsonImport.tabForm') }}
-        </button>
-        <button
-          type="button"
-          class="panel-tab"
-          :class="{ active: modalMode === 'json' }"
-          role="tab"
-          :aria-selected="modalMode === 'json'"
-          @click="switchModalMode('json')"
-        >
-          {{ t('components.mcp.jsonImport.tabBulkImport') }}
-        </button>
-      </div>
-
-      <form v-if="modalMode === 'form'" class="vendor-form" @submit.prevent="submitModal">
+      <form class="vendor-form" @submit.prevent="submitModal">
         <div class="form-row">
           <label class="form-field">
             <span>{{ t('components.mcp.form.name') }}</span>
@@ -368,108 +356,6 @@
           </BaseButton>
         </div>
       </form>
-
-      <div v-else-if="modalMode === 'json'" class="json-import-section">
-        <!-- JSON 输入区 -->
-        <div v-if="!jsonParseResult" class="json-input-area">
-          <!-- 说明 + 示例按钮 -->
-          <div class="json-header-row">
-            <span class="json-hint-text">
-              {{ t('components.mcp.jsonImport.jsonHint') }}
-            </span>
-            <button
-              type="button"
-              class="json-example-btn"
-              @click="fillExampleJson"
-            >
-              {{ t('components.mcp.jsonImport.loadExample') }}
-            </button>
-          </div>
-
-          <!-- 格式说明 -->
-          <div class="json-format-hint">
-            <div>✅ Claude Desktop: <code class="json-code-inline">{"mcpServers": {"name": {...}}}</code></div>
-            <div>✅ {{ t('components.mcp.jsonImport.formatSingle') }}: <code class="json-code-inline">{"command": "...", "args": [...]}</code></div>
-            <div>✅ {{ t('components.mcp.jsonImport.formatArray') }}: <code class="json-code-inline">[{...}, {...}]</code></div>
-          </div>
-
-          <label class="form-field">
-            <span>{{ t('components.mcp.jsonImport.inputLabel') }}</span>
-            <BaseTextarea
-              ref="jsonTextareaRef"
-              v-model="jsonInput"
-              :placeholder="t('components.mcp.jsonImport.inputPlaceholder')"
-              :disabled="jsonParsing"
-              rows="10"
-              class="json-textarea"
-            />
-          </label>
-          <p v-if="jsonError" class="alert-error">{{ jsonError }}</p>
-          <p class="json-hint">{{ t('components.mcp.jsonImport.formatHint') }}</p>
-          <div class="form-actions">
-            <BaseButton variant="outline" type="button" :disabled="jsonParsing" @click="closeModal">
-              {{ t('components.mcp.form.actions.cancel') }}
-            </BaseButton>
-            <BaseButton :disabled="jsonParsing || !jsonInput.trim()" @click="handleParseJSON">
-              {{ jsonParsing ? t('components.mcp.jsonImport.parsing') : t('components.mcp.jsonImport.parse') }}
-            </BaseButton>
-          </div>
-        </div>
-
-        <!-- 解析结果预览 -->
-        <div v-if="jsonParseResult" class="json-preview-area">
-          <div class="preview-header">
-            <span class="preview-count">{{ t('components.mcp.jsonImport.serverCount', { count: jsonParseResult?.servers?.length ?? 0 }) }}</span>
-            <button type="button" class="ghost-icon sm" :title="t('components.mcp.jsonImport.reset')" @click="resetJsonImport">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M6 6l12 12M6 18L18 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
-              </svg>
-            </button>
-          </div>
-
-          <!-- 冲突警告 -->
-          <div v-if="(jsonParseResult?.conflicts?.length ?? 0) > 0" class="conflict-warning">
-            <p>{{ t('components.mcp.jsonImport.conflictWarning', { names: jsonParseResult?.conflicts?.join(', ') ?? '' }) }}</p>
-            <div class="conflict-actions">
-              <BaseButton variant="outline" size="sm" @click="handleBatchImport('skip')">
-                {{ t('components.mcp.jsonImport.conflictSkip') }}
-              </BaseButton>
-              <BaseButton variant="outline" size="sm" @click="handleBatchImport('overwrite')">
-                {{ t('components.mcp.jsonImport.conflictOverwrite') }}
-              </BaseButton>
-              <BaseButton variant="outline" size="sm" @click="handleBatchImport('rename')">
-                {{ t('components.mcp.jsonImport.conflictRename') }}
-              </BaseButton>
-            </div>
-          </div>
-
-          <!-- 服务器列表预览 -->
-          <div class="preview-list">
-            <div v-for="(server, idx) in (jsonParseResult?.servers ?? [])" :key="idx" class="preview-item">
-              <div class="preview-item-header">
-                <span class="preview-item-name">{{ server.name || t('components.mcp.jsonImport.unnamed') }}</span>
-                <span class="preview-item-type">{{ server.type }}</span>
-              </div>
-              <p class="preview-item-detail">
-                {{ server.type === 'http' ? server.url : server.command }}
-              </p>
-            </div>
-          </div>
-
-          <div class="form-actions">
-            <BaseButton variant="outline" type="button" @click="closeModal">
-              {{ t('components.mcp.form.actions.cancel') }}
-            </BaseButton>
-            <BaseButton
-              v-if="(jsonParseResult?.conflicts?.length ?? 0) === 0"
-              :disabled="saveBusy"
-              @click="handleBatchImport('skip')"
-            >
-              {{ t('components.mcp.jsonImport.importAll') }}
-            </BaseButton>
-          </div>
-        </div>
-      </div>
     </FullScreenPanel>
 
     <InlineModal
@@ -493,6 +379,12 @@
         </BaseButton>
       </footer>
     </InlineModal>
+
+    <BatchImportModal
+      :open="showBatchImport"
+      @close="closeBatchImport"
+      @imported="onBatchImported"
+    />
   </div>
 </template>
 
@@ -505,16 +397,13 @@ import InlineModal from '../common/InlineModal.vue'
 import FullScreenPanel from '../common/FullScreenPanel.vue'
 import BaseInput from '../common/BaseInput.vue'
 import BaseTextarea from '../common/BaseTextarea.vue'
+import BatchImportModal from './BatchImportModal.vue'
 import {
   fetchMcpServers,
   saveMcpServers,
-  parseMCPJSON,
-  importMCPFromJSON,
   type McpPlatform,
   type McpServer,
   type McpServerType,
-  type MCPParseResult,
-  type ConflictStrategy,
 } from '../../services/mcp'
 import lobeIcons from '../../icons/lobeIconMap'
 import { showToast } from '../../utils/toast'
@@ -576,35 +465,6 @@ const modalState = reactive({
 // Session ID：防止异步回调竞态条件（快速切换 modal 时旧回调覆盖新状态）
 let modalSessionId = 0
 
-// JSON 导入状态
-type ModalMode = 'form' | 'json'
-const modalMode = ref<ModalMode>('form')
-const jsonInput = ref('')
-const jsonParsing = ref(false)
-const jsonError = ref('')
-const jsonParseResult = ref<MCPParseResult | null>(null)
-
-// JSON textarea 引用与自动聚焦（修复 macOS WebView 输入问题）
-type BaseTextareaHandle = { focus: () => void }
-const jsonTextareaRef = ref<BaseTextareaHandle | null>(null)
-
-const focusJsonTextarea = () => {
-  nextTick(() => {
-    requestAnimationFrame(() => {
-      jsonTextareaRef.value?.focus()
-    })
-  })
-}
-
-watch(
-  [() => modalState.open, modalMode, jsonParseResult, jsonParsing],
-  ([open, mode, result, parsing]) => {
-    if (!open || mode !== 'json' || result !== null || parsing) return
-    focusJsonTextarea()
-  },
-  { flush: 'post' }
-)
-
 // 表单模式：JSON 配置编辑器状态（单服务器对象，不含 name 与平台）
 const formJsonExpanded = ref(true)
 const formJsonLocked = ref(true)
@@ -619,6 +479,20 @@ const confirmState = reactive<{ open: boolean; target: McpServer | null }>({
   open: false,
   target: null,
 })
+
+const showBatchImport = ref(false)
+
+const openBatchImport = () => {
+  showBatchImport.value = true
+}
+
+const closeBatchImport = () => {
+  showBatchImport.value = false
+}
+
+const onBatchImported = async () => {
+  await loadServers()
+}
 
 const platformOptions = computed(() => [
   { id: 'claude-code' as McpPlatform, label: t('components.mcp.platforms.claude') },
@@ -758,9 +632,6 @@ const openCreateModal = () => {
   modalState.editingName = ''
   modalState.form = createEmptyForm()
   modalError.value = ''
-  // 重置模式和 JSON 导入状态
-  modalMode.value = 'form'
-  resetJsonImport()
   // 初始化表单 JSON 编辑器状态
   formJsonExpanded.value = true
   formJsonLocked.value = true
@@ -786,9 +657,6 @@ const openEditModal = (server: McpServer) => {
     envEntries: buildEnvEntries(server.env),
     enablePlatform: [...(server.enable_platform ?? [])],
   }
-  // 重置模式和 JSON 导入状态（编辑模式应该从表单开始）
-  modalMode.value = 'form'
-  resetJsonImport()
   // 初始化表单 JSON 编辑器状态
   formJsonExpanded.value = true
   formJsonLocked.value = true
@@ -803,147 +671,12 @@ const closeModal = () => {
   modalState.editingName = ''
   modalState.form = createEmptyForm()
   modalError.value = ''
-  // 重置 JSON 导入状态
-  modalMode.value = 'form'
-  jsonInput.value = ''
-  jsonError.value = ''
-  jsonParseResult.value = null
   // 重置表单 JSON 编辑器状态
   formJsonExpanded.value = true
   formJsonLocked.value = true
   formJsonSyncedText.value = ''
   formJsonEditingText.value = ''
   formJsonError.value = ''
-}
-
-// 切换 Modal 模式
-const switchModalMode = (mode: ModalMode) => {
-  modalMode.value = mode
-  jsonError.value = ''
-  modalError.value = ''
-  // 切到 JSON 模式时，确保清除预览结果，显示输入界面
-  if (mode === 'json') {
-    jsonParseResult.value = null
-  }
-}
-
-// 填充示例 JSON
-const fillExampleJson = () => {
-  jsonInput.value = JSON.stringify({
-    "command": "npx",
-    "args": ["-y", "@anthropic-ai/mcp-server-google-maps"],
-    "env": {
-      "GOOGLE_MAPS_API_KEY": "{YOUR_API_KEY}"
-    }
-  }, null, 2)
-  jsonError.value = ''
-}
-
-// 解析 JSON 输入
-const handleParseJSON = async () => {
-  const input = jsonInput.value.trim()
-  if (!input) {
-    jsonError.value = t('components.mcp.jsonImport.emptyInput')
-    return
-  }
-
-  const capturedSessionId = modalSessionId  // 捕获当前 session ID
-  jsonParsing.value = true
-  jsonError.value = ''
-  jsonParseResult.value = null
-
-  try {
-    const result = await parseMCPJSON(input)
-
-    // 检查 session ID：如果 modal 已关闭或重新打开，丢弃结果
-    if (capturedSessionId !== modalSessionId) {
-      return
-    }
-
-    jsonParseResult.value = result
-
-    // 单服务器且需要命名：填充表单并切换到表单模式
-    if (result.servers.length === 1 && result.needName) {
-      fillFormFromServer(result.servers[0])
-      modalMode.value = 'form'
-      showToast(t('components.mcp.jsonImport.fillForm'), 'success')
-      return
-    }
-
-    // 单服务器且已有名称：直接显示导入预览
-    if (result.servers.length === 1 && !result.needName) {
-      // 保持在 JSON 模式显示预览
-    }
-
-    // 多服务器：显示预览列表
-  } catch (error) {
-    // 检查 session ID：如果 modal 已关闭或重新打开，不显示错误
-    if (capturedSessionId !== modalSessionId) {
-      return
-    }
-    console.error('Failed to parse MCP JSON:', error)
-    jsonError.value = error instanceof Error ? error.message : t('components.mcp.jsonImport.parseError')
-  } finally {
-    // 仅当 session ID 匹配时才重置 parsing 状态
-    if (capturedSessionId === modalSessionId) {
-      jsonParsing.value = false
-    }
-  }
-}
-
-// 从服务器配置填充表单
-const fillFormFromServer = (server: McpServer) => {
-  modalState.form = {
-    name: server.name || '',
-    type: server.type || 'stdio',
-    command: server.command || '',
-    url: server.url || '',
-    website: server.website || '',
-    tips: server.tips || '',
-    argsText: (server.args || []).join('\n'),
-    envEntries: buildEnvEntries(server.env),
-    enablePlatform: [...(server.enable_platform || [])],
-  }
-}
-
-// 批量导入服务器
-const handleBatchImport = async (strategy: ConflictStrategy = 'skip') => {
-  if (!jsonParseResult.value?.servers.length) return
-
-  const capturedSessionId = modalSessionId  // 捕获当前 session ID
-  saveBusy.value = true
-  try {
-    const count = await importMCPFromJSON(jsonParseResult.value.servers, strategy)
-
-    // 检查 session ID：如果 modal 已关闭或重新打开，不执行后续操作
-    if (capturedSessionId !== modalSessionId) {
-      return
-    }
-
-    showToast(t('components.mcp.jsonImport.importSuccess', { count }), 'success')
-    closeModal()
-    await loadServers()
-  } catch (error) {
-    // 检查 session ID：如果 modal 已关闭或重新打开，不显示错误
-    if (capturedSessionId !== modalSessionId) {
-      return
-    }
-    console.error('Failed to import MCP servers:', error)
-    showToast(t('components.mcp.jsonImport.importError'), 'error')
-  } finally {
-    // 仅当 session ID 匹配时才重置 busy 状态
-    if (capturedSessionId === modalSessionId) {
-      saveBusy.value = false
-    }
-  }
-}
-
-// 重置 JSON 导入状态
-const resetJsonImport = () => {
-  jsonInput.value = ''
-  jsonError.value = ''
-  jsonParseResult.value = null
-  jsonParsing.value = false  // 确保新会话启动时不会继承旧会话的 parsing 状态
 }
 
 // ========== 表单模式：JSON 配置编辑器（单服务器对象） ==========
@@ -1486,227 +1219,6 @@ onMounted(() => {
 
 .confirm-body {
   margin-bottom: 1rem;
-}
-
-/* Panel Tab 切换 */
-.panel-tabs {
-  display: flex;
-  gap: 0;
-  margin-bottom: 1.5rem;
-  border-bottom: 1px solid var(--mac-border);
-}
-
-.panel-tab {
-  padding: 0.75rem 1.5rem;
-  background: none;
-  border: none;
-  color: var(--mac-text-secondary);
-  font-size: 15px;
-  font-weight: 500;
-  cursor: pointer;
-  position: relative;
-  transition: color 0.2s;
-}
-
-.panel-tab:hover {
-  color: var(--mac-text);
-}
-
-.panel-tab.active {
-  color: var(--mac-accent);
-  font-weight: 600;
-}
-
-.panel-tab.active::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--mac-accent);
-  border-radius: 1px 1px 0 0;
-}
-
-/* JSON 导入区域 */
-.json-import-section {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.json-input-area {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.json-textarea {
-  font-family: monospace;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.json-hint {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
-  margin: 0;
-}
-
-/* JSON 导入 header 行 */
-.json-header-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.75rem;
-}
-
-.json-hint-text {
-  font-size: 14px;
-  color: var(--mac-text-secondary);
-}
-
-.json-example-btn {
-  font-size: 14px;
-  color: #2563eb;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  transition: color 0.2s ease;
-}
-
-.json-example-btn:hover {
-  color: #1d4ed8;
-}
-
-:global(.dark) .json-example-btn {
-  color: #60a5fa;
-}
-
-:global(.dark) .json-example-btn:hover {
-  color: #93c5fd;
-}
-
-/* JSON 格式说明 */
-.json-format-hint {
-  font-size: 12px;
-  color: var(--mac-text-secondary);
-  background: rgba(59, 130, 246, 0.08);
-  padding: 0.75rem;
-  border-radius: 8px;
-  margin-bottom: 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-:global(.dark) .json-format-hint {
-  background: rgba(30, 58, 138, 0.2);
-}
-
-.json-code-inline {
-  padding: 0 0.25rem;
-  background: var(--mac-surface);
-  border-radius: 4px;
-  font-family: monospace;
-  font-size: 11px;
-}
-
-:global(.dark) .json-code-inline {
-  background: rgba(31, 41, 55, 0.8);
-}
-
-/* 解析结果预览 */
-.json-preview-area {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.preview-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.preview-count {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--accent-color, #4ade80);
-}
-
-.ghost-icon.sm {
-  width: 28px;
-  height: 28px;
-}
-
-.ghost-icon.sm svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* 冲突警告 */
-.conflict-warning {
-  padding: 1rem;
-  border-radius: 12px;
-  background: rgba(251, 191, 36, 0.15);
-  border: 1px solid rgba(251, 191, 36, 0.3);
-}
-
-.conflict-warning p {
-  margin: 0 0 0.75rem;
-  font-size: 13px;
-  color: #fbbf24;
-}
-
-.conflict-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-/* 服务器列表预览 */
-.preview-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-.preview-item {
-  padding: 0.75rem 1rem;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.preview-item-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.25rem;
-}
-
-.preview-item-name {
-  font-weight: 600;
-  font-size: 14px;
-}
-
-.preview-item-type {
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  text-transform: uppercase;
-}
-
-.preview-item-detail {
-  margin: 0;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.6);
-  word-break: break-all;
 }
 
 /* 表单模式 JSON 配置编辑器 */

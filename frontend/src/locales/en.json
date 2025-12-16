@@ -559,6 +559,31 @@
         "refresh": "Refresh",
         "create": "New server"
       },
+      "import": {
+        "title": "Batch Import MCP Servers",
+        "inputDesc": "Paste MCP configuration JSON. Supports Claude Desktop format, array format, or server map format.",
+        "placeholder": "{\n  \"mcpServers\": {\n    \"server-name\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@modelcontextprotocol/server-xxx\"]\n    }\n  }\n}",
+        "next": "Next",
+        "parsing": "Parsing...",
+        "back": "Back",
+        "reviewTitle": "Found {count} servers",
+        "selectAll": "Select All",
+        "conflictNotice": "{count} server(s) conflict with existing configuration",
+        "strategySkip": "Skip conflicts",
+        "strategyOverwrite": "Overwrite existing",
+        "status": {
+          "new": "New",
+          "conflict": "Conflict"
+        },
+        "submit": "Import {count}",
+        "importing": "Importing...",
+        "success": "Successfully imported {count} MCP server(s)",
+        "allSkipped": "All servers were skipped, nothing imported",
+        "noServers": "No valid server configuration found",
+        "needName": "Single server config requires a name",
+        "parseError": "Failed to parse JSON",
+        "importError": "Import failed. Please try again."
+      },
       "section": {
         "title": "Registered servers",
         "subtitle": "Synced from ~/.code-switch/mcp.json and saved immediately"
@@ -650,32 +675,6 @@
         },
         "deleteTitle": "Delete MCP server",
         "deleteMessage": "Are you sure you want to delete {name}? This action cannot be undone."
-      },
-      "jsonImport": {
-        "tabForm": "Form",
-        "tabBulkImport": "Bulk Import",
-        "jsonHint": "Supports Claude Desktop, array, single object formats",
-        "loadExample": "Load Example",
-        "formatSingle": "Single Object",
-        "formatArray": "Array",
-        "inputLabel": "Paste MCP Config JSON",
-        "inputPlaceholder": "Supports Claude Desktop format, array format, or single server format...",
-        "formatHint": "Supported formats: {\"mcpServers\": {...}}, [{...}], or {\"command\": ...}",
-        "parse": "Parse",
-        "parsing": "Parsing...",
-        "emptyInput": "Please enter JSON content",
-        "parseError": "Failed to parse JSON",
-        "fillForm": "Form filled. Please provide a server name.",
-        "serverCount": "{count} server(s)",
-        "reset": "Reset",
-        "unnamed": "Unnamed",
-        "importAll": "Import All",
-        "importSuccess": "Successfully imported {count} MCP server(s)",
-        "importError": "Import failed. Please try again.",
-        "conflictWarning": "The following servers already exist: {names}",
-        "conflictSkip": "Skip conflicts",
-        "conflictOverwrite": "Overwrite existing",
-        "conflictRename": "Rename and import"
       }
     },
     "gemini": {
