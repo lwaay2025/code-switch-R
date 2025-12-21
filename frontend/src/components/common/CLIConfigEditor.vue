@@ -721,6 +721,22 @@ const updateFieldJSON = (key: string, jsonStr: string) => {
 const emitChanges = () => {
   // 合并自定义字段到 editableValues
   const merged = { ...editableValues.value }
+
+  // 清理 merged 中残留的旧自定义字段
+  const activeCustomKeys = new Set(customFields.value.map(f => f.key.trim()).filter(k => k))
+
+  Object.keys(merged).forEach(key => {
+    // 如果该 key 不是预置/锁定字段，也不是对象，则视为自定义字段
+    const isPotentialCustom = !presetFieldKeys.value.has(key) &&
+                              !lockedFieldKeys.value.has(key) &&
+                              typeof merged[key] !== 'object'
+
+    // 如果它不在当前有效的自定义字段列表中，说明是残留的旧 key，应当清除
+    if (isPotentialCustom && !activeCustomKeys.has(key)) {
+      delete merged[key]
+    }
+  })
+
   customFields.value.forEach(field => {
     const key = field.key.trim()
     if (key) {
@@ -753,6 +769,10 @@ const updateCustomFieldKey = (index: number, newKey: string) => {
 
   // 空 key 直接清空并同步
   if (!normalizedKey) {
+    // 确保从 editableValues 中删除旧 key，防止残留
+    if (oldKey && editableValues.value[oldKey] !== undefined) {
+      delete editableValues.value[oldKey]
+    }
     field.key = ''
     emitChanges()
     return
