@@ -792,6 +792,15 @@
                   <BaseButton type="submit">
                     {{ t('components.main.form.actions.save') }}
                   </BaseButton>
+                  <!-- 保存并应用：仅在编辑模式、非代理模式、非 others 平台时显示 -->
+                  <BaseButton
+                    v-if="modalState.editingId && modalState.tabId !== 'others' && !activeProxyState"
+                    type="button"
+                    variant="primary"
+                    @click="submitAndApplyModal"
+                  >
+                    {{ t('components.main.form.actions.saveAndApply') }}
+                  </BaseButton>
                 </footer>
       </form>
       </BaseModal>
@@ -2771,6 +2780,42 @@ const submitModal = async () => {
 
   // 通知可用性页面刷新
   window.dispatchEvent(new CustomEvent('providers-updated'))
+}
+
+// 保存并应用：先保存供应商配置，再直连应用到 CLI
+const submitAndApplyModal = async () => {
+  // 1. 执行普通保存逻辑
+  const editingId = modalState.editingId
+  const tabId = modalState.tabId as ProviderTab
+  if (!editingId || tabId === 'others') return
+
+  // 获取当前编辑的卡片
+  const editingCard = cards[tabId]?.find(c => c.id === editingId)
+  if (!editingCard) return
+
+  // 调用标准保存流程
+  await submitModal()
+
+  // 2. 保存成功后，应用到 CLI（直连模式）
+  try {
+    if (tabId === 'claude') {
+      await Call.ByName('codeswitch/services.ClaudeSettingsService.ApplySingleProvider', editingId)
+    } else if (tabId === 'codex') {
+      await Call.ByName('codeswitch/services.CodexSettingsService.ApplySingleProvider', editingId)
+    } else if (tabId === 'gemini') {
+      // Gemini 使用字符串 ID，需要从 cache 中找到原始 provider
+      const index = cards.gemini.findIndex(c => c.id === editingId)
+      if (index !== -1 && geminiProvidersCache.value[index]) {
+        const realId = geminiProvidersCache.value[index].id
+        await Call.ByName('codeswitch/services.GeminiService.ApplySingleProvider', realId)
+      }
+    }
+    await refreshDirectAppliedStatus(tabId)
+    showToast(t('components.main.directApply.success', { name: editingCard.name }), 'success')
+  } catch (error) {
+    console.error('Apply after save failed', error)
+    showToast(t('components.main.directApply.failed'), 'error')
+  }
 }
 
 const configure = (card: AutomationCard) => {

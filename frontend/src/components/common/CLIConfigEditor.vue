@@ -227,6 +227,16 @@
               <span v-if="previewEditable">🔓 {{ t('components.cliConfig.previewEditUnlocked') }}</span>
               <span v-else>🔒 {{ t('components.cliConfig.previewEditLocked') }}</span>
             </button>
+            <!-- Current 标签页解锁按钮 -->
+            <button
+              v-if="previewExpanded && selectedPreviewTab === 1"
+              type="button"
+              class="cli-action-btn cli-preview-lock"
+              @click.stop="toggleCurrentEditable"
+            >
+              <span v-if="currentEditable">🔓 {{ t('components.cliConfig.previewEditUnlocked') }}</span>
+              <span v-else>🔒 {{ t('components.cliConfig.previewEditLocked') }}</span>
+            </button>
           </div>
           <div v-if="previewExpanded" class="cli-preview-tabs-wrapper">
             <TabGroup :selectedIndex="selectedPreviewTab" @change="selectedPreviewTab = $event">
@@ -289,18 +299,50 @@
                     <pre v-else class="cli-preview-content">{{ file.content }}</pre>
                   </div>
                 </TabPanel>
-                <!-- Current Tab: 当前磁盘配置（只读） -->
+                <!-- Current Tab: 当前磁盘配置 -->
                 <TabPanel class="cli-preview-list">
                   <div
                     v-for="(file, index) in currentFiles"
-                    :key="'current-' + getPreviewKey(file, index)"
+                    :key="'current-' + getCurrentKey(file, index)"
                     class="cli-preview-card"
                   >
                     <div class="cli-preview-meta">
                       <span class="cli-preview-name">{{ file.path || t('components.cliConfig.previewUnknownPath') }}</span>
                       <span class="cli-preview-format">{{ (file.format || config?.configFormat || '').toUpperCase() }}</span>
                     </div>
-                    <pre class="cli-preview-content">{{ file.content }}</pre>
+                    <template v-if="currentEditable">
+                      <textarea
+                        :ref="index === 0 ? (el) => currentTextareaRef = el as HTMLTextAreaElement : undefined"
+                        v-model="currentEditingContent[getCurrentKey(file, index)]"
+                        class="cli-preview-textarea"
+                        rows="8"
+                      />
+                      <div class="cli-preview-actions">
+                        <button
+                          type="button"
+                          class="cli-action-btn cli-primary-btn"
+                          :disabled="currentSaving"
+                          @click="handleApplyCurrentEdit(file, index)"
+                        >
+                          {{ t('components.cliConfig.previewApply') }}
+                        </button>
+                        <button
+                          type="button"
+                          class="cli-action-btn"
+                          :disabled="currentSaving"
+                          @click="handleResetCurrentEdit(file, index)"
+                        >
+                          {{ t('components.cliConfig.previewReset') }}
+                        </button>
+                      </div>
+                      <div
+                        v-if="currentErrors[getCurrentKey(file, index)]"
+                        class="cli-preview-error"
+                      >
+                        {{ currentErrors[getCurrentKey(file, index)] }}
+                      </div>
+                    </template>
+                    <pre v-else class="cli-preview-content">{{ file.content }}</pre>
                   </div>
                 </TabPanel>
               </TabPanels>
@@ -366,6 +408,13 @@ const editingContent = ref<Record<string, string>>({})
 const previewErrors = ref<Record<string, string>>({})
 const firstTextareaRef = ref<HTMLTextAreaElement | null>(null)
 const selectedPreviewTab = ref(0) // 0: Preview, 1: Current
+
+// Current 标签页编辑状态
+const currentEditable = ref(false)
+const currentSaving = ref(false)
+const currentEditingContent = ref<Record<string, string>>({})
+const currentErrors = ref<Record<string, string>>({})
+const currentTextareaRef = ref<HTMLTextAreaElement | null>(null)
 
 // 获取所有预置字段的 key（包括锁定和可编辑）
 const presetFieldKeys = computed(() => {
@@ -690,6 +739,10 @@ const loadConfig = async () => {
     extractCustomFields()
     // 初始化预览可编辑内容
     initPreviewEditing()
+    // 重置 Current 编辑状态（切换平台/恢复默认时丢弃未保存编辑）
+    currentEditable.value = false
+    currentEditingContent.value = {}
+    currentErrors.value = {}
   } catch (error) {
     console.error('Failed to load CLI config:', error)
     config.value = null
@@ -1164,6 +1217,8 @@ const initPreviewEditing = () => {
 const handleApplyPreviewEdit = async (file: CLIConfigFile, index: number) => {
   const key = getPreviewKey(file, index)
   const text = editingContent.value[key] ?? file.content ?? ''
+  // 缓存当前平台，防止保存/刷新过程中切换平台导致竞态
+  const platform = props.platform
 
   if (!file.path) {
     previewErrors.value[key] = t('components.cliConfig.previewUnknownPath')
@@ -1171,13 +1226,27 @@ const handleApplyPreviewEdit = async (file: CLIConfigFile, index: number) => {
     return
   }
 
+  // 防御：避免极端情况下的重复触发（双击/连点）
+  if (previewSaving.value) return
+
   previewSaving.value = true
   try {
-    await saveCLIConfigFileContent(props.platform, file.path, text)
+    await saveCLIConfigFileContent(platform, file.path, text)
+    // 校验平台是否在保存过程中发生变化
+    if (platform !== props.platform) {
+      console.warn('[CLIConfigEditor] Platform changed during save, skipping state update')
+      return
+    }
     // 重新拉取，让预览展示真实落盘内容（含后端强制写入的锁定字段）
-    config.value = await fetchCLIConfig(props.platform)
+    const nextConfig = await fetchCLIConfig(platform)
+    // 校验平台是否在刷新过程中发生变化（避免旧平台结果覆盖新平台界面状态）
+    if (platform !== props.platform) {
+      console.warn('[CLIConfigEditor] Platform changed during fetch, skipping state update')
+      return
+    }
+    config.value = nextConfig
     // 同步 editableValues 到新配置，避免表单状态不一致
-    editableValues.value = { ...(config.value?.editable || {}) }
+    editableValues.value = { ...(nextConfig.editable || {}) }
     // 提取自定义字段（防止预览保存覆盖了自定义字段后表单丢失）
     extractCustomFields()
     // 通知父组件（避免后续表单提交覆盖预览保存的内容）
@@ -1201,6 +1270,96 @@ const handleResetPreviewEdit = (file: CLIConfigFile, index: number) => {
   const key = getPreviewKey(file, index)
   editingContent.value[key] = file.content || ''
   delete previewErrors.value[key]
+}
+
+// ========== Current 标签页编辑函数 ==========
+
+// 生成 Current 文件的唯一 key（与 getPreviewKey 保持一致，前缀在 DOM :key 处添加）
+const getCurrentKey = (file: CLIConfigFile, index: number): string => {
+  return file.path || `${file.format || 'file'}-${index}`
+}
+
+// 切换 Current 区编辑模式
+const toggleCurrentEditable = () => {
+  currentEditable.value = !currentEditable.value
+  if (!currentEditable.value) {
+    // 锁定时清空编辑缓冲，避免旧数据意外复用
+    currentEditingContent.value = {}
+    currentErrors.value = {}
+  } else {
+    // 解锁时总是从最新磁盘内容初始化（Current 语义是实时磁盘状态）
+    initCurrentEditing()
+    nextTick(() => {
+      currentTextareaRef.value?.focus()
+    })
+  }
+}
+
+// 初始化 Current 编辑内容
+const initCurrentEditing = () => {
+  const nextContent: Record<string, string> = {}
+  currentFiles.value.forEach((file, index) => {
+    const key = getCurrentKey(file, index)
+    nextContent[key] = file.content || ''
+  })
+  currentEditingContent.value = nextContent
+  currentErrors.value = {}
+}
+
+// 应用 Current 编辑（保存到磁盘）
+const handleApplyCurrentEdit = async (file: CLIConfigFile, index: number) => {
+  const key = getCurrentKey(file, index)
+  const text = currentEditingContent.value[key] ?? file.content ?? ''
+  // 缓存当前平台，防止保存过程中切换平台导致竞态
+  const platform = props.platform
+
+  if (!file.path) {
+    currentErrors.value[key] = t('components.cliConfig.previewUnknownPath')
+    showToast(t('components.cliConfig.previewUnknownPath'), 'error')
+    return
+  }
+
+  // 防御：避免极端情况下的重复触发（双击/连点）
+  if (currentSaving.value) return
+
+  currentSaving.value = true
+  try {
+    await saveCLIConfigFileContent(platform, file.path, text)
+    // 校验平台是否在保存过程中发生变化
+    if (platform !== props.platform) {
+      console.warn('[CLIConfigEditor] Platform changed during save, skipping state update')
+      return
+    }
+    // 重新拉取配置以同步状态
+    const nextConfig = await fetchCLIConfig(platform)
+    // 校验平台是否在刷新过程中发生变化（避免旧平台结果覆盖新平台界面状态）
+    if (platform !== props.platform) {
+      console.warn('[CLIConfigEditor] Platform changed during fetch, skipping state update')
+      return
+    }
+    config.value = nextConfig
+    editableValues.value = { ...(nextConfig.editable || {}) }
+    extractCustomFields()
+    emitChanges()
+    // 重置当前文件的编辑内容
+    currentEditingContent.value[key] = currentFiles.value.find((f, i) => getCurrentKey(f, i) === key)?.content || ''
+    delete currentErrors.value[key]
+    showToast(t('components.cliConfig.previewApplySuccess'), 'success')
+  } catch (error) {
+    console.error('Failed to save current file content:', error)
+    const errorMsg = extractErrorMessage(error, t('components.cliConfig.loadError'))
+    currentErrors.value[key] = errorMsg
+    showToast(errorMsg, 'error')
+  } finally {
+    currentSaving.value = false
+  }
+}
+
+// 还原 Current 编辑
+const handleResetCurrentEdit = (file: CLIConfigFile, index: number) => {
+  const key = getCurrentKey(file, index)
+  currentEditingContent.value[key] = file.content || ''
+  delete currentErrors.value[key]
 }
 
 // 监听 modelValue 变化

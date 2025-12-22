@@ -5,6 +5,7 @@ import { Call } from '@wailsio/runtime'
 import ListItem from '../Setting/ListRow.vue'
 import LanguageSwitcher from '../Setting/LanguageSwitcher.vue'
 import ThemeSetting from '../Setting/ThemeSetting.vue'
+import NetworkWslSettings from '../Setting/NetworkWslSettings.vue'
 import { fetchAppSettings, saveAppSettings, type AppSettings } from '../../services/appSettings'
 import { checkUpdate, downloadUpdate, restartApp, getUpdateState, setAutoCheckEnabled, type UpdateState } from '../../services/update'
 import { fetchCurrentVersion } from '../../services/version'
@@ -456,6 +457,9 @@ onMounted(async () => {
           </ListItem>
         </div>
       </section>
+
+      <!-- Network & WSL Settings -->
+      <NetworkWslSettings />
 
       <section>
         <h2 class="mac-section-title">{{ $t('components.general.title.blacklist') }}</h2>

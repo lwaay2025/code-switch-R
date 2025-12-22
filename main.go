@@ -127,6 +127,7 @@ func main() {
 	versionService := NewVersionService()
 	consoleService := services.NewConsoleService()
 	customCliService := services.NewCustomCliService(providerRelay.Addr())
+	networkService := services.NewNetworkService(providerRelay.Addr(), claudeSettings, codexSettings, geminiService)
 
 	// 应用待处理的更新
 	go func() {
@@ -228,6 +229,7 @@ func main() {
 			application.NewService(geminiService),
 			application.NewService(consoleService),
 			application.NewService(customCliService),
+			application.NewService(networkService),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
