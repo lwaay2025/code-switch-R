@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"unicode/utf16"
 )
 
 const (
@@ -171,6 +172,30 @@ func (ns *NetworkService) computeListenAddress(settings NetworkSettings) string 
 	}
 }
 
+// decodeUTF16LE 将 UTF-16 LE 编码的字节转换为 UTF-8 字符串
+// wsl --list 命令在 Windows 上输出 UTF-16 LE 编码
+func decodeUTF16LE(b []byte) string {
+	// 跳过 BOM（如果存在）
+	if len(b) >= 2 && b[0] == 0xFF && b[1] == 0xFE {
+		b = b[2:]
+	}
+
+	// 确保字节数为偶数
+	if len(b)%2 != 0 {
+		b = b[:len(b)-1]
+	}
+
+	// 将字节转换为 uint16 切片
+	u16s := make([]uint16, len(b)/2)
+	for i := 0; i < len(u16s); i++ {
+		u16s[i] = uint16(b[2*i]) | uint16(b[2*i+1])<<8 // Little Endian
+	}
+
+	// 解码 UTF-16 到 rune 切片
+	runes := utf16.Decode(u16s)
+	return string(runes)
+}
+
 // DetectWSL 检测 WSL 状态
 func (ns *NetworkService) DetectWSL() WSLDetection {
 	result := WSLDetection{
@@ -190,12 +215,15 @@ func (ns *NetworkService) DetectWSL() WSLDetection {
 		return result
 	}
 
+	// wsl 命令输出 UTF-16 LE 编码，需要解码
+	decoded := decodeUTF16LE(output)
+
 	// 解析输出，提取发行版名称
-	lines := strings.Split(string(output), "\n")
+	lines := strings.Split(decoded, "\n")
 	for _, line := range lines {
-		// 清理行内容（去除 BOM、空白字符等）
+		// 清理行内容（去除空白字符、NUL 等）
 		distro := strings.TrimSpace(line)
-		distro = strings.Trim(distro, "\x00\ufeff")
+		distro = strings.Trim(distro, "\x00\r")
 		if distro != "" && !strings.HasPrefix(distro, "Windows") {
 			result.Distros = append(result.Distros, distro)
 		}
