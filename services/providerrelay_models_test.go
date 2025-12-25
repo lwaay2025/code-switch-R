@@ -26,7 +26,7 @@ func TestModelsHandler(t *testing.T) {
 			t.Errorf("期望路径 /v1/models，收到 %s", r.URL.Path)
 		}
 
-		// 验证认证头（默认应使用 x-api-key，针对 Claude 平台）
+		// 验证认证头（默认应使用 x-api-key，针对 Claude 平台的 /v1/models）
 		apiKeyHeader := r.Header.Get("x-api-key")
 		if apiKeyHeader == "" {
 			t.Error("缺少 x-api-key 头")

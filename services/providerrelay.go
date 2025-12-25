@@ -1866,7 +1866,7 @@ func (prs *ProviderRelayService) forwardModelsRequest(
 	case "x-api-key":
 		req.Header.Set("x-api-key", selectedProvider.APIKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
-	case "", "bearer":
+	case "bearer":
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", selectedProvider.APIKey))
 	default:
 		headerName := strings.TrimSpace(selectedProvider.ConnectivityAuthType)
