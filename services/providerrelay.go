@@ -192,8 +192,8 @@ func (prs *ProviderRelayService) registerRoutes(router gin.IRouter) {
 	router.POST("/responses", prs.proxyHandler("codex", "/responses"))
 
 	// /v1/models 端点（OpenAI-compatible API）
-	// 支持 Claude 和 Codex 平台
-	router.GET("/v1/models", prs.modelsHandler("claude"))
+	// 默认走 Codex 平台（OpenAI/GPT 风格）
+	router.GET("/v1/models", prs.modelsHandler("codex"))
 
 	// Gemini API 端点（使用专门的路径前缀避免与 Claude 冲突）
 	router.POST("/gemini/v1beta/*any", prs.geminiProxyHandler("/v1beta"))

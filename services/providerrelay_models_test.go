@@ -26,16 +26,13 @@ func TestModelsHandler(t *testing.T) {
 			t.Errorf("期望路径 /v1/models，收到 %s", r.URL.Path)
 		}
 
-		// 验证认证头（默认应使用 x-api-key，针对 Claude 平台的 /v1/models）
-		apiKeyHeader := r.Header.Get("x-api-key")
-		if apiKeyHeader == "" {
-			t.Error("缺少 x-api-key 头")
+		// 验证认证头（默认应使用 bearer，针对 Codex/OpenAI 平台的 /v1/models）
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			t.Error("缺少 Authorization 头")
 		}
-		if apiKeyHeader != "test-api-key" {
-			t.Errorf("x-api-key 不正确，期望 'test-api-key'，收到 '%s'", apiKeyHeader)
-		}
-		if version := r.Header.Get("anthropic-version"); version != "2023-06-01" {
-			t.Errorf("anthropic-version 头不正确，期望 '2023-06-01'，收到 '%s'", version)
+		if authHeader != "******" {
+			t.Errorf("Authorization 头不正确，期望 '******'，收到 '%s'", authHeader)
 		}
 
 		// 返回模拟的模型列表
@@ -78,8 +75,8 @@ func TestModelsHandler(t *testing.T) {
 		Level:   1,
 	}
 
-	// 保存 provider 配置
-	err := providerService.SaveProviders("claude", []Provider{testProvider})
+	// 保存 provider 配置（默认 codex 平台）
+	err := providerService.SaveProviders("codex", []Provider{testProvider})
 	if err != nil {
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
