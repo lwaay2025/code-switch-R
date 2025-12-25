@@ -122,16 +122,7 @@ func NewHealthCheckService(
 			"gemini": {},
 		},
 		pollInterval: time.Duration(DefaultPollIntervalSeconds) * time.Second,
-		client: &http.Client{
-			// 由每次请求的 context 控制超时，避免固定值截断自定义配置
-			Timeout: 0,
-			Transport: &http.Transport{
-				MaxIdleConns:        20,
-				IdleConnTimeout:     30 * time.Second,
-				DisableCompression:  true,
-				MaxIdleConnsPerHost: 5,
-			},
-		},
+		client: GetHTTPClient(), // 使用全局客户端，超时由每次请求的 context 控制
 	}
 }
 

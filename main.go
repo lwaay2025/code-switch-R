@@ -91,7 +91,22 @@ func main() {
 	}
 	log.Println("✅ 数据库写入队列已启动")
 
-	// 【修复】第三步：创建服务（现在可以安全使用数据库了）
+	// 【新增】第三步：初始化全局 HTTP 客户端（支持代理配置）
+	proxyConfig, err := services.GetProxyConfig()
+	if err != nil {
+		log.Printf("⚠️  读取代理配置失败，使用默认配置: %v", err)
+		proxyConfig = services.ProxyConfig{UseProxy: false}
+	}
+	if err := services.InitHTTPClient(proxyConfig); err != nil {
+		log.Fatalf("初始化 HTTP 客户端失败: %v", err)
+	}
+	if proxyConfig.UseProxy {
+		log.Printf("✅ HTTP 客户端已初始化（代理: %s %s）", proxyConfig.ProxyType, proxyConfig.ProxyAddress)
+	} else {
+		log.Println("✅ HTTP 客户端已初始化（直连模式）")
+	}
+
+	// 【修复】第四步：创建服务（现在可以安全使用数据库了）
 	suiService, errt := services.NewSuiStore()
 	if errt != nil {
 		log.Fatalf("SuiStore 初始化失败: %v", errt)

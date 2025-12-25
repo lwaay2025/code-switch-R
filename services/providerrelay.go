@@ -637,6 +637,7 @@ func (prs *ProviderRelayService) forwardRequest(
 	}()
 
 	req := xrequest.New().
+		SetClient(GetHTTPClient()).
 		SetHeaders(headers).
 		SetQueryParams(query).
 		SetRetry(1, 500*time.Millisecond).

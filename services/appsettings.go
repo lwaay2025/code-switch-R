@@ -13,17 +13,20 @@ import (
 const (
 	appSettingsDir      = ".code-switch" // 【修复】修正拼写错误（原为 .codex-swtich）
 	appSettingsFile     = "app.json"
-	oldSettingsDir      = ".codex-swtich"           // 旧的错误拼写
+	oldSettingsDir      = ".codex-swtich"               // 旧的错误拼写
 	migrationMarkerFile = ".migrated-from-codex-swtich" // 迁移标记文件
 )
 
 type AppSettings struct {
-	ShowHeatmap          bool `json:"show_heatmap"`
-	ShowHomeTitle        bool `json:"show_home_title"`
-	AutoStart            bool `json:"auto_start"`
-	AutoUpdate           bool `json:"auto_update"`
-	AutoConnectivityTest bool `json:"auto_connectivity_test"`
-	EnableSwitchNotify   bool `json:"enable_switch_notify"` // 供应商切换通知开关
+	ShowHeatmap          bool   `json:"show_heatmap"`
+	ShowHomeTitle        bool   `json:"show_home_title"`
+	AutoStart            bool   `json:"auto_start"`
+	AutoUpdate           bool   `json:"auto_update"`
+	AutoConnectivityTest bool   `json:"auto_connectivity_test"`
+	EnableSwitchNotify   bool   `json:"enable_switch_notify"` // 供应商切换通知开关
+	UseProxy             bool   `json:"use_proxy"`            // 是否启用代理服务器
+	ProxyAddress         string `json:"proxy_address"`        // 代理地址（如 http://127.0.0.1:1080）
+	ProxyType            string `json:"proxy_type"`           // 代理类型：http/https/socks5
 }
 
 type AppSettingsService struct {
@@ -139,9 +142,12 @@ func (as *AppSettingsService) defaultSettings() AppSettings {
 		ShowHeatmap:          true,
 		ShowHomeTitle:        true,
 		AutoStart:            autoStartEnabled,
-		AutoUpdate:           true, // 默认开启自动更新
-		AutoConnectivityTest: true, // 默认开启自动可用性监控（开箱即用）
-		EnableSwitchNotify:   true, // 默认开启切换通知
+		AutoUpdate:           true,   // 默认开启自动更新
+		AutoConnectivityTest: true,   // 默认开启自动可用性监控（开箱即用）
+		EnableSwitchNotify:   true,   // 默认开启切换通知
+		UseProxy:             false,  // 默认不使用代理
+		ProxyAddress:         "",     // 默认代理地址为空
+		ProxyType:            "http", // 默认代理类型为 HTTP
 	}
 }
 
@@ -173,6 +179,18 @@ func (as *AppSettingsService) SaveAppSettings(settings AppSettings) (AppSettings
 	if err := as.saveLocked(settings); err != nil {
 		return settings, err
 	}
+
+	// 【新增】同步代理配置到全局 HTTP 客户端
+	proxyConfig := ProxyConfig{
+		UseProxy:     settings.UseProxy,
+		ProxyAddress: settings.ProxyAddress,
+		ProxyType:    settings.ProxyType,
+	}
+	if err := UpdateHTTPClient(proxyConfig); err != nil {
+		// 代理配置更新失败不应阻止设置保存，只记录错误
+		fmt.Printf("⚠️  更新 HTTP 客户端代理配置失败: %v\n", err)
+	}
+
 	return settings, nil
 }
 

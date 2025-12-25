@@ -86,7 +86,7 @@ func NewSkillService() *SkillService {
 		home = "."
 	}
 	return &SkillService{
-		httpClient: &http.Client{Timeout: 60 * time.Second},
+		httpClient: GetHTTPClientWithTimeout(60 * time.Second),
 		storePath:  filepath.Join(home, skillStoreDir, skillStoreFile),
 		installDir: filepath.Join(home, ".claude", "skills"),
 	}
