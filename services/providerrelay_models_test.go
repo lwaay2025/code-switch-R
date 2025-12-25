@@ -26,7 +26,7 @@ func TestModelsHandler(t *testing.T) {
 			t.Errorf("期望路径 /v1/models，收到 %s", r.URL.Path)
 		}
 
-		// 验证 Authorization 头
+		// 验证认证头（默认应使用 bearer，针对 Codex/OpenAI 平台的 /v1/models）
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			t.Error("缺少 Authorization 头")
@@ -40,15 +40,15 @@ func TestModelsHandler(t *testing.T) {
 			"object": "list",
 			"data": []map[string]interface{}{
 				{
-					"id":      "claude-sonnet-4",
-					"object":  "model",
-					"created": 1234567890,
+					"id":       "claude-sonnet-4",
+					"object":   "model",
+					"created":  1234567890,
 					"owned_by": "anthropic",
 				},
 				{
-					"id":      "claude-opus-4",
-					"object":  "model",
-					"created": 1234567890,
+					"id":       "claude-opus-4",
+					"object":   "model",
+					"created":  1234567890,
 					"owned_by": "anthropic",
 				},
 			},
@@ -63,7 +63,7 @@ func TestModelsHandler(t *testing.T) {
 	// 创建测试用的 ProviderService
 	providerService := NewProviderService()
 	blacklistService := NewBlacklistService()
-	notificationService := NewNotificationService()
+	notificationService := NewNotificationService(nil)
 
 	// 创建测试用的 provider（使用模拟服务器的 URL）
 	testProvider := Provider{
@@ -75,8 +75,8 @@ func TestModelsHandler(t *testing.T) {
 		Level:   1,
 	}
 
-	// 保存 provider 配置
-	err := providerService.SaveProviders("claude", []Provider{testProvider})
+	// 保存 provider 配置（默认 codex 平台）
+	err := providerService.SaveProviders("codex", []Provider{testProvider})
 	if err != nil {
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestCustomModelsHandler(t *testing.T) {
 	// 创建测试用的 ProviderService
 	providerService := NewProviderService()
 	blacklistService := NewBlacklistService()
-	notificationService := NewNotificationService()
+	notificationService := NewNotificationService(nil)
 
 	// 创建测试用的 provider（使用模拟服务器的 URL）
 	testProvider := Provider{
@@ -232,7 +232,7 @@ func TestModelsHandler_NoProviders(t *testing.T) {
 	// 创建空的 ProviderService
 	providerService := NewProviderService()
 	blacklistService := NewBlacklistService()
-	notificationService := NewNotificationService()
+	notificationService := NewNotificationService(nil)
 
 	// 创建 ProviderRelayService（没有配置任何 provider）
 	relayService := NewProviderRelayService(providerService, nil, blacklistService, notificationService, "")
