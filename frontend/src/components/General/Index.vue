@@ -28,6 +28,12 @@ const autoStartEnabled = ref(getCachedValue('autoStart', false))
 const autoUpdateEnabled = ref(getCachedValue('autoUpdate', true))
 const autoConnectivityTestEnabled = ref(getCachedValue('autoConnectivityTest', false))
 const switchNotifyEnabled = ref(getCachedValue('switchNotify', true)) // 切换通知开关
+
+// 代理配置相关状态
+const useProxy = ref(getCachedValue('useProxy', false))
+const proxyAddress = ref(localStorage.getItem('app-settings-proxyAddress') || '')
+const proxyType = ref(localStorage.getItem('app-settings-proxyType') || 'http')
+
 const settingsLoading = ref(true)
 const saveBusy = ref(false)
 
@@ -65,6 +71,9 @@ const loadAppSettings = async () => {
     autoUpdateEnabled.value = data?.auto_update ?? true
     autoConnectivityTestEnabled.value = data?.auto_connectivity_test ?? false
     switchNotifyEnabled.value = data?.enable_switch_notify ?? true
+    useProxy.value = data?.use_proxy ?? false
+    proxyAddress.value = data?.proxy_address ?? ''
+    proxyType.value = data?.proxy_type ?? 'http'
 
     // 缓存到 localStorage，下次打开时直接显示正确状态
     localStorage.setItem('app-settings-heatmap', String(heatmapEnabled.value))
@@ -73,6 +82,9 @@ const loadAppSettings = async () => {
     localStorage.setItem('app-settings-autoUpdate', String(autoUpdateEnabled.value))
     localStorage.setItem('app-settings-autoConnectivityTest', String(autoConnectivityTestEnabled.value))
     localStorage.setItem('app-settings-switchNotify', String(switchNotifyEnabled.value))
+    localStorage.setItem('app-settings-useProxy', String(useProxy.value))
+    localStorage.setItem('app-settings-proxyAddress', proxyAddress.value)
+    localStorage.setItem('app-settings-proxyType', proxyType.value)
   } catch (error) {
     console.error('failed to load app settings', error)
     heatmapEnabled.value = true
@@ -81,6 +93,9 @@ const loadAppSettings = async () => {
     autoUpdateEnabled.value = true
     autoConnectivityTestEnabled.value = false
     switchNotifyEnabled.value = true
+    useProxy.value = false
+    proxyAddress.value = ''
+    proxyType.value = 'http'
   } finally {
     settingsLoading.value = false
   }
@@ -97,6 +112,9 @@ const persistAppSettings = async () => {
       auto_update: autoUpdateEnabled.value,
       auto_connectivity_test: autoConnectivityTestEnabled.value,
       enable_switch_notify: switchNotifyEnabled.value,
+      use_proxy: useProxy.value,
+      proxy_address: proxyAddress.value,
+      proxy_type: proxyType.value,
     }
     await saveAppSettings(payload)
 
@@ -458,6 +476,51 @@ onMounted(async () => {
         </div>
       </section>
 
+      <!-- Proxy Settings -->
+      <section>
+        <h2 class="mac-section-title">{{ $t('components.general.title.proxy') }}</h2>
+        <div class="mac-panel">
+          <ListItem :label="$t('components.general.label.useProxy')">
+            <div class="toggle-with-hint">
+              <label class="mac-switch">
+                <input
+                  type="checkbox"
+                  :disabled="settingsLoading || saveBusy"
+                  v-model="useProxy"
+                  @change="persistAppSettings"
+                />
+                <span></span>
+              </label>
+              <span class="hint-text">{{ $t('components.general.label.useProxyHint') }}</span>
+            </div>
+          </ListItem>
+          
+          <template v-if="useProxy">
+            <ListItem :label="$t('components.general.label.proxyType')">
+              <select
+                v-model="proxyType"
+                :disabled="settingsLoading || saveBusy"
+                @change="persistAppSettings"
+                class="mac-select">
+                <option value="http">HTTP/HTTPS</option>
+                <option value="socks5">SOCKS5</option>
+              </select>
+            </ListItem>
+            
+            <ListItem :label="$t('components.general.label.proxyAddress')">
+              <input
+                type="text"
+                v-model="proxyAddress"
+                @blur="persistAppSettings"
+                :placeholder="$t('components.general.label.proxyAddressPlaceholder')"
+                :disabled="settingsLoading || saveBusy"
+                class="mac-input proxy-address-input"
+              />
+            </ListItem>
+          </template>
+        </div>
+      </section>
+
       <!-- Network & WSL Settings -->
       <NetworkWslSettings />
 
@@ -660,6 +723,11 @@ onMounted(async () => {
 
 .import-path-input {
   width: 280px;
+  font-size: 12px;
+}
+
+.proxy-address-input {
+  width: 320px;
   font-size: 12px;
 }
 

@@ -81,15 +81,7 @@ func NewConnectivityTestService(
 			"gemini": {},
 		},
 		autoTestEnabled: false,
-		client: &http.Client{
-			Timeout: 10 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:        10,
-				IdleConnTimeout:     30 * time.Second,
-				DisableCompression:  true,
-				MaxIdleConnsPerHost: 5,
-			},
-		},
+		client:          GetHTTPClientWithTimeout(10 * time.Second),
 	}
 }
 

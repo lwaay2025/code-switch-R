@@ -148,9 +148,7 @@ func detectPortableMode() bool {
 func (us *UpdateService) CheckUpdate() (*UpdateInfo, error) {
 	log.Printf("[UpdateService] 开始检查更新，当前版本: %s", us.currentVersion)
 
-	client := &http.Client{
-		Timeout: 15 * time.Second, // 增加超时时间从10秒到15秒
-	}
+	client := GetHTTPClientWithTimeout(15 * time.Second)
 
 	releaseURL := "https://api.github.com/repos/Rogers-F/code-switch-R/releases/latest"
 
@@ -312,7 +310,7 @@ func (us *UpdateService) findSHA256ForAsset(assets []struct {
 	}
 
 	// 下载并解析 SHA256 文件
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := GetHTTPClientWithTimeout(10 * time.Second)
 	resp, err := client.Get(sha256URL)
 	if err != nil {
 		log.Printf("[UpdateService] 下载 SHA256 文件失败: %v", err)
@@ -431,7 +429,7 @@ func (us *UpdateService) DownloadUpdate(progressCallback func(float64)) error {
 
 // downloadWithResume 支持断点续传的下载
 func (us *UpdateService) downloadWithResume(url, dest string, progressCallback func(float64)) error {
-	client := &http.Client{Timeout: 5 * time.Minute}
+	client := GetHTTPClientWithTimeout(5 * time.Minute)
 
 	var start int64
 	var total int64
@@ -1962,9 +1960,7 @@ func (us *UpdateService) downloadAndVerify(assetName string) (string, error) {
 
 // downloadFile 下载单个文件
 func (us *UpdateService) downloadFile(url, destPath string) error {
-	client := &http.Client{
-		Timeout: 5 * time.Minute, // 大文件下载超时
-	}
+	client := GetHTTPClientWithTimeout(5 * time.Minute)
 
 	resp, err := client.Get(url)
 	if err != nil {

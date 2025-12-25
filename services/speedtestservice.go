@@ -145,16 +145,16 @@ func (s *SpeedTestService) formatError(err error) string {
 
 // buildClient 构建 HTTP 客户端
 func (s *SpeedTestService) buildClient(timeoutSecs int) *http.Client {
-	return &http.Client{
-		Timeout: time.Duration(timeoutSecs) * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			// 限制重定向次数为 5
-			if len(via) >= 5 {
-				return fmt.Errorf("重定向次数过多")
-			}
-			return nil
-		},
+	client := GetHTTPClientWithTimeout(time.Duration(timeoutSecs) * time.Second)
+	// 配置重定向策略
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		// 限制重定向次数为 5
+		if len(via) >= 5 {
+			return fmt.Errorf("重定向次数过多")
+		}
+		return nil
 	}
+	return client
 }
 
 // sanitizeTimeout 规范化超时参数

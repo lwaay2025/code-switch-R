@@ -7,6 +7,9 @@ export type AppSettings = {
   auto_update: boolean
   auto_connectivity_test: boolean
   enable_switch_notify: boolean // 供应商切换通知开关
+  use_proxy: boolean // 是否启用代理服务器
+  proxy_address: string // 代理地址
+  proxy_type: string // 代理类型：http/https/socks5
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -16,6 +19,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   auto_update: true,
   auto_connectivity_test: false,
   enable_switch_notify: true, // 默认开启
+  use_proxy: false, // 默认不使用代理
+  proxy_address: '', // 默认代理地址为空
+  proxy_type: 'http', // 默认代理类型为 HTTP
 }
 
 export const fetchAppSettings = async (): Promise<AppSettings> => {
