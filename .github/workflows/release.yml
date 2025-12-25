@@ -331,6 +331,29 @@ jobs:
       - name: Display structure
         run: ls -R artifacts
 
+      - name: Determine tag to release
+        id: tag
+        run: |
+          # Determine the tag to use for the release.
+          # - If triggered by workflow_dispatch, use the user input (ensure it starts with 'v')
+          # - If triggered by tag push, use the pushed tag (from GITHUB_REF)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            IN="${{ github.event.inputs.version }}"
+            if [ -z "$IN" ]; then
+              echo "No version input provided" >&2
+              exit 1
+            fi
+            if [[ "$IN" == v* ]]; then
+              TAG="$IN"
+            else
+              TAG="v$IN"
+            fi
+          else
+            TAG=${GITHUB_REF#refs/tags/}
+          fi
+          echo "Determined tag: $TAG"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
@@ -358,13 +381,10 @@ jobs:
 
       - name: Generate release body
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-            VERSION="${VERSION#v}"
-          else
-            VERSION=${GITHUB_REF#refs/tags/v}
-          fi
-          echo "Generating release body for v$VERSION"
+          # Use the determined tag (from previous step)
+          TAG="${{ steps.tag.outputs.tag }}"
+          VERSION="${TAG#v}"
+          echo "Generating release body for $TAG (version: $VERSION)"
 
           # 提取当前版本的更新内容（从标题到下一个版本标题之前）
           # 注意：先用 tr 去除 Windows CRLF 换行符，否则 awk 匹配失败
@@ -435,6 +455,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ steps.tag.outputs.tag }}
           files: release-assets/*
           body_path: /tmp/release_body.md
           draft: false
