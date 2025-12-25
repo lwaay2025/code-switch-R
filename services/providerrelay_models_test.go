@@ -31,8 +31,8 @@ func TestModelsHandler(t *testing.T) {
 		if authHeader == "" {
 			t.Error("缺少 Authorization 头")
 		}
-		if authHeader != "******" {
-			t.Errorf("Authorization 头不正确，期望 '******'，收到 '%s'", authHeader)
+		if authHeader != "Bearer test-api-key" {
+			t.Errorf("Authorization 头不正确，期望 'Bearer test-api-key'，收到 '%s'", authHeader)
 		}
 
 		// 返回模拟的模型列表
