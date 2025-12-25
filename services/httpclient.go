@@ -194,8 +194,12 @@ func createSOCKS5ProxyTransport(proxyAddr string) (*http.Transport, error) {
 		socksAddr = proxyAddr
 	}
 
-	// 创建 SOCKS5 拨号器
-	dialer, err := proxy.SOCKS5("tcp", socksAddr, nil, proxy.Direct)
+	// 创建 SOCKS5 拨号器，使用带超时的底层拨号器避免长时间阻塞
+	baseDialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	dialer, err := proxy.SOCKS5("tcp", socksAddr, nil, baseDialer)
 	if err != nil {
 		return nil, fmt.Errorf("创建 SOCKS5 拨号器失败: %w", err)
 	}
@@ -204,7 +208,33 @@ func createSOCKS5ProxyTransport(proxyAddr string) (*http.Transport, error) {
 	transport := &http.Transport{
 		Dial: dialer.Dial,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return dialer.Dial(network, addr)
+			if ctxDialer, ok := dialer.(proxy.ContextDialer); ok {
+				return ctxDialer.DialContext(ctx, network, addr)
+			}
+			type result struct {
+				conn net.Conn
+				err  error
+			}
+			resultCh := make(chan result, 1)
+			go func() {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					resultCh <- result{conn: nil, err: ctxErr}
+					return
+				}
+				conn, err := dialer.Dial(network, addr)
+				if ctx.Err() != nil && conn != nil {
+					_ = conn.Close()
+					err = ctx.Err()
+					conn = nil
+				}
+				resultCh <- result{conn: conn, err: err}
+			}()
+			select {
+			case res := <-resultCh:
+				return res.conn, res.err
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 		},
 		ForceAttemptHTTP2:     false, // SOCKS5 通常不支持 HTTP/2
 		MaxIdleConns:          100,
