@@ -202,7 +202,7 @@ func (prs *ProviderRelayService) registerRoutes(router gin.IRouter) {
 	// 自定义 CLI 工具端点（路由格式: /custom/:toolId/v1/messages）
 	// toolId 用于区分不同的 CLI 工具，对应 provider kind 为 "custom:{toolId}"
 	router.POST("/custom/:toolId/v1/messages", prs.customCliProxyHandler())
-	
+
 	// 自定义 CLI 工具的 /v1/models 端点
 	router.GET("/custom/:toolId/v1/models", prs.customModelsHandler())
 }
@@ -546,9 +546,9 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 			totalAttempts, lastProvider, errorMsg)
 
 		c.JSON(http.StatusBadGateway, gin.H{
-			"error":         fmt.Sprintf("所有 %d 个 provider 均失败，最后错误: %s", totalAttempts, errorMsg),
-			"last_provider": lastProvider,
-			"last_duration": fmt.Sprintf("%.2fs", lastDuration.Seconds()),
+			"error":          fmt.Sprintf("所有 %d 个 provider 均失败，最后错误: %s", totalAttempts, errorMsg),
+			"last_provider":  lastProvider,
+			"last_duration":  fmt.Sprintf("%.2fs", lastDuration.Seconds()),
 			"total_attempts": totalAttempts,
 		})
 	}
@@ -911,7 +911,7 @@ func mergeGeminiUsageMetadata(usage gjson.Result, reqLog *ReqeustLog) {
 // 【修复】维护跨 chunk 缓冲，确保完整 SSE 事件解析
 // Gemini SSE 格式: "data: {json}\n\n" 或 "data: [DONE]\n\n"
 func streamGeminiResponseWithHook(body io.Reader, writer io.Writer, requestLog *ReqeustLog) error {
-	buf := make([]byte, 8192) // 增大缓冲区减少系统调用
+	buf := make([]byte, 8192)   // 增大缓冲区减少系统调用
 	var lineBuf strings.Builder // 跨 chunk 行缓冲
 
 	for {
@@ -1853,8 +1853,15 @@ func (prs *ProviderRelayService) forwardModelsRequest(
 		}
 	}
 
-	// 根据认证方式设置请求头（默认 Bearer，与 v2.2.x 保持一致）
+	// 根据认证方式设置请求头
 	authType := strings.ToLower(strings.TrimSpace(selectedProvider.ConnectivityAuthType))
+	if authType == "" {
+		if strings.EqualFold(kind, "claude") {
+			authType = "x-api-key"
+		} else {
+			authType = "bearer"
+		}
+	}
 	switch authType {
 	case "x-api-key":
 		req.Header.Set("x-api-key", selectedProvider.APIKey)

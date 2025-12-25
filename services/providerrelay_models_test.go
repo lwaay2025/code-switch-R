@@ -26,13 +26,16 @@ func TestModelsHandler(t *testing.T) {
 			t.Errorf("期望路径 /v1/models，收到 %s", r.URL.Path)
 		}
 
-		// 验证 Authorization 头
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			t.Error("缺少 Authorization 头")
+		// 验证认证头（默认应使用 x-api-key，针对 Claude 平台）
+		apiKeyHeader := r.Header.Get("x-api-key")
+		if apiKeyHeader == "" {
+			t.Error("缺少 x-api-key 头")
 		}
-		if authHeader != "Bearer test-api-key" {
-			t.Errorf("Authorization 头不正确，期望 'Bearer test-api-key'，收到 '%s'", authHeader)
+		if apiKeyHeader != "test-api-key" {
+			t.Errorf("x-api-key 不正确，期望 'test-api-key'，收到 '%s'", apiKeyHeader)
+		}
+		if version := r.Header.Get("anthropic-version"); version != "2023-06-01" {
+			t.Errorf("anthropic-version 头不正确，期望 '2023-06-01'，收到 '%s'", version)
 		}
 
 		// 返回模拟的模型列表
@@ -40,15 +43,15 @@ func TestModelsHandler(t *testing.T) {
 			"object": "list",
 			"data": []map[string]interface{}{
 				{
-					"id":      "claude-sonnet-4",
-					"object":  "model",
-					"created": 1234567890,
+					"id":       "claude-sonnet-4",
+					"object":   "model",
+					"created":  1234567890,
 					"owned_by": "anthropic",
 				},
 				{
-					"id":      "claude-opus-4",
-					"object":  "model",
-					"created": 1234567890,
+					"id":       "claude-opus-4",
+					"object":   "model",
+					"created":  1234567890,
 					"owned_by": "anthropic",
 				},
 			},
@@ -63,7 +66,7 @@ func TestModelsHandler(t *testing.T) {
 	// 创建测试用的 ProviderService
 	providerService := NewProviderService()
 	blacklistService := NewBlacklistService()
-	notificationService := NewNotificationService()
+	notificationService := NewNotificationService(nil)
 
 	// 创建测试用的 provider（使用模拟服务器的 URL）
 	testProvider := Provider{
@@ -165,7 +168,7 @@ func TestCustomModelsHandler(t *testing.T) {
 	// 创建测试用的 ProviderService
 	providerService := NewProviderService()
 	blacklistService := NewBlacklistService()
-	notificationService := NewNotificationService()
+	notificationService := NewNotificationService(nil)
 
 	// 创建测试用的 provider（使用模拟服务器的 URL）
 	testProvider := Provider{
@@ -232,7 +235,7 @@ func TestModelsHandler_NoProviders(t *testing.T) {
 	// 创建空的 ProviderService
 	providerService := NewProviderService()
 	blacklistService := NewBlacklistService()
-	notificationService := NewNotificationService()
+	notificationService := NewNotificationService(nil)
 
 	// 创建 ProviderRelayService（没有配置任何 provider）
 	relayService := NewProviderRelayService(providerService, nil, blacklistService, notificationService, "")
