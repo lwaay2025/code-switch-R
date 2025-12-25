@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -202,7 +203,7 @@ func createSOCKS5ProxyTransport(proxyAddr string) (*http.Transport, error) {
 	// 创建使用 SOCKS5 代理的传输层
 	transport := &http.Transport{
 		Dial: dialer.Dial,
-		DialContext: func(ctx interface{}, network, addr string) (net.Conn, error) {
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return dialer.Dial(network, addr)
 		},
 		ForceAttemptHTTP2:     false, // SOCKS5 通常不支持 HTTP/2
