@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.2.3 or v1.2.3). 手动触发时请填写。'
+        required: true
+        default: ''
 
 permissions:
   contents: write
@@ -18,9 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Update version from tag
+      - name: Update version from tag or input
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION=${GITHUB_REF#refs/tags/v}
+          fi
           echo "Updating version to: $VERSION"
           sed -i '' "s/const AppVersion = \"v[^\"]*\"/const AppVersion = \"v$VERSION\"/" version_service.go
           echo "Updated version_service.go:"
@@ -78,15 +89,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Update version from tag
+      - name: Update version from tag or input
         shell: pwsh
         run: |
-          $VERSION = "${{ github.ref_name }}".TrimStart('v')
+          $eventName = "${{ github.event_name }}"
+          if ($eventName -eq "workflow_dispatch") {
+            $ver = "${{ github.event.inputs.version }}"
+            $ver = $ver.TrimStart('v')
+            $VERSION = $ver
+          } else {
+            $VERSION = "${{ github.ref_name }}".TrimStart('v')
+          }
           Write-Host "Updating version to: $VERSION"
 
           # Update version_service.go
           $content = Get-Content version_service.go -Raw
-          $content = $content -replace 'const AppVersion = "v[^"]*"', "const AppVersion = `"v$VERSION`""
+          $content = $content -replace 'const AppVersion = "v[^" ]*"', "const AppVersion = `"v$VERSION`""
           Set-Content version_service.go $content
           Write-Host "Updated version_service.go:"
           Select-String "AppVersion" version_service.go
@@ -187,9 +205,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Update version from tag
+      - name: Update version from tag or input
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION=${GITHUB_REF#refs/tags/v}
+          fi
           echo "Updating version to: $VERSION"
           sed -i "s/const AppVersion = \"v[^\"]*\"/const AppVersion = \"v$VERSION\"/" version_service.go
           echo "Updated version_service.go:"
@@ -257,7 +280,12 @@ jobs:
 
       - name: Update nfpm version
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION=${GITHUB_REF#refs/tags/v}
+          fi
           sed -i "s/^version:.*/version: \"$VERSION\"/" build/linux/nfpm/nfpm.yaml
           echo "Updated nfpm version to: $VERSION"
 
@@ -330,7 +358,12 @@ jobs:
 
       - name: Generate release body
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION=${GITHUB_REF#refs/tags/v}
+          fi
           echo "Generating release body for v$VERSION"
 
           # 提取当前版本的更新内容（从标题到下一个版本标题之前）
