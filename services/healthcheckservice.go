@@ -100,9 +100,6 @@ type HealthCheckService struct {
 	running      bool
 	stopChan     chan struct{}
 	pollInterval time.Duration
-
-	// HTTP 客户端（带连接池）
-	client *http.Client
 }
 
 // NewHealthCheckService 创建健康检查服务
@@ -122,7 +119,6 @@ func NewHealthCheckService(
 			"gemini": {},
 		},
 		pollInterval: time.Duration(DefaultPollIntervalSeconds) * time.Second,
-		client:       GetHTTPClient(), // 使用全局客户端，超时由每次请求的 context 控制
 	}
 }
 
@@ -584,15 +580,29 @@ func (hcs *HealthCheckService) checkProvider(ctx context.Context, provider Provi
 		}
 	}
 
+	// 获取当前代理配置（用于日志记录）
+	proxyConfig := GetProxyConfig()
+	var proxyMode string
+	if proxyConfig.UseProxy && proxyConfig.ProxyAddress != "" {
+		proxyMode = fmt.Sprintf("代理 %s", proxyConfig.ProxyAddress)
+	} else {
+		proxyMode = "直连"
+	}
+
+	// 日志：发起检测
+	log.Printf("[HealthCheck] [%s/%s] 发起可用性检测 (模式: %s)", platform, provider.Name, proxyMode)
+
 	// 发送请求并计时
 	start := time.Now()
 
-	// 使用 per-request context 控制超时（复用服务级客户端）
+	// 使用 per-request context 控制超时（获取最新的全局客户端）
 	reqCtx, cancelReq := context.WithTimeout(ctx, time.Duration(timeout)*time.Millisecond)
 	defer cancelReq()
 	req = req.WithContext(reqCtx)
 
-	resp, err := hcs.client.Do(req)
+	// 动态获取最新的 HTTP 客户端，确保代理配置实时生效
+	client := GetHTTPClient()
+	resp, err := client.Do(req)
 	latencyMs := int(time.Since(start).Milliseconds())
 	result.LatencyMs = latencyMs
 
@@ -601,12 +611,13 @@ func (hcs *HealthCheckService) checkProvider(ctx context.Context, provider Provi
 		if isTimeoutError(err) {
 			result.Status = HealthStatusFailed
 			result.ErrorMessage = fmt.Sprintf("响应超时 (>%dms)", timeout)
-			log.Printf("[HealthCheck] [%s/%s] 请求超时: %dms (阈值: %dms)",
-				platform, provider.Name, latencyMs, timeout)
+			log.Printf("[HealthCheck] [%s/%s] 检测结果: %s, 延迟: %dms (模式: %s)",
+				platform, provider.Name, result.Status, latencyMs, proxyMode)
 			return result
 		}
 		result.ErrorMessage = fmt.Sprintf("网络错误: %v", err)
-		log.Printf("[HealthCheck] [%s/%s] 网络错误: %v", platform, provider.Name, err)
+		log.Printf("[HealthCheck] [%s/%s] 检测结果: %s, 延迟: %dms (模式: %s) - %v",
+			platform, provider.Name, result.Status, latencyMs, proxyMode, err)
 		return result
 	}
 	defer resp.Body.Close()
@@ -619,6 +630,10 @@ func (hcs *HealthCheckService) checkProvider(ctx context.Context, provider Provi
 
 	// 判定状态
 	result.Status, result.ErrorMessage = hcs.determineStatus(resp.StatusCode, latencyMs, body)
+
+	// 日志：检测完成
+	log.Printf("[HealthCheck] [%s/%s] 检测结果: %s, 延迟: %dms (模式: %s)",
+		platform, provider.Name, result.Status, latencyMs, proxyMode)
 
 	return result
 }

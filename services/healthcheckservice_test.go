@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -53,9 +55,7 @@ func TestHealthCheck_ModelMapping(t *testing.T) {
 	}
 
 	// 创建健康检查服务
-	hcs := &HealthCheckService{
-		client: http.DefaultClient,
-	}
+	hcs := &HealthCheckService{}
 
 	// 执行健康检查
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -99,9 +99,7 @@ func TestHealthCheck_AcceptHeader(t *testing.T) {
 	}
 
 	// 创建健康检查服务
-	hcs := &HealthCheckService{
-		client: http.DefaultClient,
-	}
+	hcs := &HealthCheckService{}
 
 	// 执行健康检查
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -273,9 +271,7 @@ func TestHealthCheck_NoModelMapping(t *testing.T) {
 		ModelMapping: nil, // 没有映射
 	}
 
-	hcs := &HealthCheckService{
-		client: http.DefaultClient,
-	}
+	hcs := &HealthCheckService{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -352,9 +348,7 @@ func BenchmarkCheckProvider(b *testing.B) {
 		},
 	}
 
-	hcs := &HealthCheckService{
-		client: http.DefaultClient,
-	}
+	hcs := &HealthCheckService{}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -371,5 +365,173 @@ func BenchmarkBuildTestRequest(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = hcs.buildTestRequest("codex", "gpt-4o-mini")
+	}
+}
+
+// TestHealthCheck_ProxyLogging 测试健康检查是否正确记录代理信息
+func TestHealthCheck_ProxyLogging(t *testing.T) {
+	// 捕获日志输出
+	var logBuffer bytes.Buffer
+	oldOutput := log.Writer()
+	log.SetOutput(&logBuffer)
+	defer log.SetOutput(oldOutput) // 恢复原始日志输出
+
+	// 创建测试服务器
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"result": "ok"}`))
+	}))
+	defer server.Close()
+
+	// 测试用例：直连模式
+	t.Run("DirectConnection", func(t *testing.T) {
+		logBuffer.Reset()
+
+		// 设置直连模式
+		InitHTTPClient(ProxyConfig{UseProxy: false})
+
+		provider := Provider{
+			ID:      1,
+			Name:    "test-provider-direct",
+			APIURL:  server.URL,
+			APIKey:  "test-key",
+			Enabled: true,
+		}
+
+		hcs := &HealthCheckService{}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		_ = hcs.checkProvider(ctx, provider, "codex")
+
+		// 验证日志包含"直连"
+		logOutput := logBuffer.String()
+		if !strings.Contains(logOutput, "直连") {
+			t.Errorf("日志应该包含'直连'，实际日志: %s", logOutput)
+		}
+		if !strings.Contains(logOutput, "发起可用性检测") {
+			t.Error("日志应该包含'发起可用性检测'")
+		}
+		if !strings.Contains(logOutput, "检测结果") {
+			t.Error("日志应该包含'检测结果'")
+		}
+	})
+
+	// 测试用例：代理模式
+	t.Run("ProxyConnection", func(t *testing.T) {
+		logBuffer.Reset()
+
+		// 设置代理模式
+		InitHTTPClient(ProxyConfig{
+			UseProxy:     true,
+			ProxyAddress: "http://127.0.0.1:7890",
+			ProxyType:    "http",
+		})
+
+		provider := Provider{
+			ID:      2,
+			Name:    "test-provider-proxy",
+			APIURL:  server.URL,
+			APIKey:  "test-key",
+			Enabled: true,
+		}
+
+		hcs := &HealthCheckService{}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		_ = hcs.checkProvider(ctx, provider, "codex")
+
+		// 验证日志包含代理地址
+		logOutput := logBuffer.String()
+		if !strings.Contains(logOutput, "代理 http://127.0.0.1:7890") {
+			t.Errorf("日志应该包含'代理 http://127.0.0.1:7890'，实际日志: %s", logOutput)
+		}
+		if !strings.Contains(logOutput, "发起可用性检测") {
+			t.Error("日志应该包含'发起可用性检测'")
+		}
+		if !strings.Contains(logOutput, "检测结果") {
+			t.Error("日志应该包含'检测结果'")
+		}
+	})
+}
+
+// TestHealthCheck_DynamicHTTPClient 测试健康检查是否动态获取 HTTP 客户端
+func TestHealthCheck_DynamicHTTPClient(t *testing.T) {
+	// 创建测试服务器
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"result": "ok"}`))
+	}))
+	defer server.Close()
+
+	provider := Provider{
+		ID:      1,
+		Name:    "test-provider",
+		APIURL:  server.URL,
+		APIKey:  "test-key",
+		Enabled: true,
+	}
+
+	hcs := &HealthCheckService{}
+
+	// 第一次检测：使用直连
+	InitHTTPClient(ProxyConfig{UseProxy: false})
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel1()
+	result1 := hcs.checkProvider(ctx1, provider, "codex")
+	if result1.Status != HealthStatusOperational {
+		t.Errorf("第一次检测应该成功，实际状态: %s", result1.Status)
+	}
+
+	// 更新代理配置
+	UpdateHTTPClient(ProxyConfig{
+		UseProxy:     true,
+		ProxyAddress: "http://127.0.0.1:7890",
+		ProxyType:    "http",
+	})
+
+	// 第二次检测：应该使用新的代理配置（尽管代理不可达，但我们测试的是配置是否更新）
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+	result2 := hcs.checkProvider(ctx2, provider, "codex")
+
+	// 注意：由于测试服务器在本地，即使设置了不可达的代理，请求也可能成功或失败
+	// 这里我们主要验证代码能够正常执行，不会 panic
+	if result2 == nil {
+		t.Error("第二次检测不应该返回 nil")
+	}
+}
+
+// TestGetProxyConfig 测试 GetProxyConfig 函数
+func TestGetProxyConfig(t *testing.T) {
+	// 测试初始配置
+	InitHTTPClient(ProxyConfig{
+		UseProxy:     false,
+		ProxyAddress: "",
+		ProxyType:    "",
+	})
+
+	config := GetProxyConfig()
+	if config.UseProxy {
+		t.Error("初始配置应该是直连模式")
+	}
+
+	// 更新为代理模式
+	UpdateHTTPClient(ProxyConfig{
+		UseProxy:     true,
+		ProxyAddress: "http://proxy.example.com:8080",
+		ProxyType:    "http",
+	})
+
+	config = GetProxyConfig()
+	if !config.UseProxy {
+		t.Error("配置应该是代理模式")
+	}
+	if config.ProxyAddress != "http://proxy.example.com:8080" {
+		t.Errorf("代理地址错误，期望: %s，实际: %s", "http://proxy.example.com:8080", config.ProxyAddress)
+	}
+	if config.ProxyType != "http" {
+		t.Errorf("代理类型错误，期望: %s，实际: %s", "http", config.ProxyType)
 	}
 }

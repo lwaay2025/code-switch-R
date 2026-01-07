@@ -92,7 +92,7 @@ func main() {
 	log.Println("✅ 数据库写入队列已启动")
 
 	// 【新增】第三步：初始化全局 HTTP 客户端（支持代理配置）
-	proxyConfig, err := services.GetProxyConfig()
+	proxyConfig, err := services.GetProxyConfigFromSettings()
 	if err != nil {
 		log.Printf("⚠️  读取代理配置失败，使用默认配置: %v", err)
 		proxyConfig = services.ProxyConfig{UseProxy: false}
@@ -155,7 +155,7 @@ func main() {
 	// 启动定时检查（如果启用）
 	if updateService.IsAutoCheckEnabled() {
 		go func() {
-			time.Sleep(10 * time.Second) // 延迟10秒，等待应用完成初始化
+			time.Sleep(10 * time.Second)     // 延迟10秒，等待应用完成初始化
 			updateService.CheckUpdateAsync() // 启动时检查一次
 			updateService.StartDailyCheck()  // 启动每日8点定时检查
 		}()
