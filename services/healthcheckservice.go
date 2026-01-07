@@ -66,16 +66,16 @@ type HealthCheckHistory struct {
 
 // ProviderTimeline Provider 时间线（用于前端展示）
 type ProviderTimeline struct {
-	ProviderID                 int64                `json:"providerId"`
-	ProviderName               string               `json:"providerName"`
-	Platform                   string               `json:"platform"`
-	AvailabilityMonitorEnabled bool                 `json:"availabilityMonitorEnabled"`
-	ConnectivityAutoBlacklist  bool                 `json:"connectivityAutoBlacklist"`
-	AvailabilityConfig         *AvailabilityConfig  `json:"availabilityConfig,omitempty"` // 高级配置
-	Items                      []HealthCheckResult  `json:"items"`                        // 历史记录
-	Latest                     *HealthCheckResult   `json:"latest"`                       // 最新一条
-	Uptime                     float64              `json:"uptime"`                       // 可用率
-	AvgLatencyMs               int                  `json:"avgLatencyMs"`                 // 平均延迟
+	ProviderID                 int64               `json:"providerId"`
+	ProviderName               string              `json:"providerName"`
+	Platform                   string              `json:"platform"`
+	AvailabilityMonitorEnabled bool                `json:"availabilityMonitorEnabled"`
+	ConnectivityAutoBlacklist  bool                `json:"connectivityAutoBlacklist"`
+	AvailabilityConfig         *AvailabilityConfig `json:"availabilityConfig,omitempty"` // 高级配置
+	Items                      []HealthCheckResult `json:"items"`                        // 历史记录
+	Latest                     *HealthCheckResult  `json:"latest"`                       // 最新一条
+	Uptime                     float64             `json:"uptime"`                       // 可用率
+	AvgLatencyMs               int                 `json:"avgLatencyMs"`                 // 平均延迟
 }
 
 // AvailabilityFailureCounter 可用性失败计数器（独立于真实请求）
@@ -93,7 +93,7 @@ type HealthCheckService struct {
 	settingsService  *SettingsService
 
 	mu            sync.RWMutex
-	failCounters  map[string]*AvailabilityFailureCounter // key: platform:providerName
+	failCounters  map[string]*AvailabilityFailureCounter  // key: platform:providerName
 	latestResults map[string]map[int64]*HealthCheckResult // platform -> providerID -> result
 
 	// 后台轮询
@@ -122,7 +122,7 @@ func NewHealthCheckService(
 			"gemini": {},
 		},
 		pollInterval: time.Duration(DefaultPollIntervalSeconds) * time.Second,
-		client: GetHTTPClient(), // 使用全局客户端，超时由每次请求的 context 控制
+		client:       GetHTTPClient(), // 使用全局客户端，超时由每次请求的 context 控制
 	}
 }
 
@@ -522,11 +522,18 @@ func (hcs *HealthCheckService) checkProvider(ctx context.Context, provider Provi
 	endpoint := hcs.getEffectiveEndpoint(&provider, platform)
 	timeout := hcs.getEffectiveTimeout(&provider)
 
+	// 应用模型映射（关键修复：与 ProviderRelayService 对齐）
+	// 使用映射后的模型名发送给上游，确保健康检查与实际请求行为一致
+	mappedModel := provider.GetEffectiveModel(model)
+	if mappedModel != model {
+		log.Printf("[HealthCheck] [%s/%s] 模型映射: %s -> %s", platform, provider.Name, model, mappedModel)
+	}
+
 	result.Model = model
 	result.Endpoint = endpoint
 
-	// 构建请求体
-	reqBody := hcs.buildTestRequest(platform, model)
+	// 构建请求体（使用映射后的模型名）
+	reqBody := hcs.buildTestRequest(platform, mappedModel)
 	if reqBody == nil {
 		result.ErrorMessage = "无法构建测试请求"
 		return result
@@ -548,6 +555,7 @@ func (hcs *HealthCheckService) checkProvider(ctx context.Context, provider Provi
 
 	// 设置 Headers
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json") // 修复：添加 Accept 头，某些提供商或代理需要此头
 	if provider.APIKey != "" {
 		// 根据认证方式设置请求头
 		authTypeRaw := strings.TrimSpace(provider.ConnectivityAuthType)
@@ -683,20 +691,20 @@ func (hcs *HealthCheckService) getEffectiveEndpoint(provider *Provider, platform
 		return provider.AvailabilityConfig.TestEndpoint
 	}
 
-	// 优先级 2：用户配置的生产端点（如果配置了 apiEndpoint）
-	if provider.APIEndpoint != "" {
-		return provider.GetEffectiveEndpoint("")
-	}
-
-	// 优先级 3：平台默认端点
+	// 获取平台默认端点（用于 GetEffectiveEndpoint）
+	var defaultEndpoint string
 	switch strings.ToLower(platform) {
 	case "claude":
-		return "/v1/messages"
+		defaultEndpoint = "/v1/messages"
 	case "codex":
-		return "/responses"
+		defaultEndpoint = "/responses"
 	default:
-		return "/v1/chat/completions"
+		defaultEndpoint = "/v1/chat/completions"
 	}
+
+	// 优先级 2：用户配置的生产端点（如果配置了 apiEndpoint）
+	// 使用 GetEffectiveEndpoint 确保与 ProviderRelayService 行为一致
+	return provider.GetEffectiveEndpoint(defaultEndpoint)
 }
 
 // getEffectiveTimeout 获取有效的超时时间（毫秒）
