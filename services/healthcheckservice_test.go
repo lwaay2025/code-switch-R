@@ -186,6 +186,7 @@ func TestBuildTestRequest(t *testing.T) {
 		model         string
 		expectNonNil  bool
 		validateModel bool
+		expectMax     bool
 	}{
 		{
 			name:          "Codex 平台请求",
@@ -193,6 +194,7 @@ func TestBuildTestRequest(t *testing.T) {
 			model:         "gpt-4o-mini",
 			expectNonNil:  true,
 			validateModel: true,
+			expectMax:     false,
 		},
 		{
 			name:          "Claude 平台请求",
@@ -200,6 +202,7 @@ func TestBuildTestRequest(t *testing.T) {
 			model:         "claude-3-5-haiku-20241022",
 			expectNonNil:  true,
 			validateModel: true,
+			expectMax:     true,
 		},
 		{
 			name:          "映射后的模型名",
@@ -207,6 +210,7 @@ func TestBuildTestRequest(t *testing.T) {
 			model:         "openai/gpt-4o-mini",
 			expectNonNil:  true,
 			validateModel: true,
+			expectMax:     false,
 		},
 	}
 
@@ -239,6 +243,14 @@ func TestBuildTestRequest(t *testing.T) {
 
 				if model != tt.model {
 					t.Errorf("Expected model %s in request body, got %s", tt.model, model)
+				}
+
+				_, hasMaxTokens := reqData["max_tokens"]
+				if tt.expectMax && !hasMaxTokens {
+					t.Error("Expected max_tokens in request body but not found")
+				}
+				if !tt.expectMax && hasMaxTokens {
+					t.Error("max_tokens should not be included for this platform")
 				}
 			}
 		})
