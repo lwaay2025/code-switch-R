@@ -9,7 +9,10 @@ func TestConnectivityBuildTestRequestCodexOmitsMaxTokens(t *testing.T) {
 	cts := &ConnectivityTestService{}
 	provider := Provider{}
 
-	body, _ := cts.buildTestRequest("codex", &provider)
+	body, contentField := cts.buildTestRequest("codex", &provider)
+	if contentField != "choices" {
+		t.Fatalf("unexpected content field: %s", contentField)
+	}
 
 	var req map[string]interface{}
 	if err := json.Unmarshal(body, &req); err != nil {
