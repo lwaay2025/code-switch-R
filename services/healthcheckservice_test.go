@@ -55,9 +55,7 @@ func TestHealthCheck_ModelMapping(t *testing.T) {
 	}
 
 	// 创建健康检查服务
-	hcs := &HealthCheckService{
-		client: http.DefaultClient,
-	}
+	hcs := &HealthCheckService{}
 
 	// 执行健康检查
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -101,9 +99,7 @@ func TestHealthCheck_AcceptHeader(t *testing.T) {
 	}
 
 	// 创建健康检查服务
-	hcs := &HealthCheckService{
-		client: http.DefaultClient,
-	}
+	hcs := &HealthCheckService{}
 
 	// 执行健康检查
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -275,9 +271,7 @@ func TestHealthCheck_NoModelMapping(t *testing.T) {
 		ModelMapping: nil, // 没有映射
 	}
 
-	hcs := &HealthCheckService{
-		client: http.DefaultClient,
-	}
+	hcs := &HealthCheckService{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -354,9 +348,7 @@ func BenchmarkCheckProvider(b *testing.B) {
 		},
 	}
 
-	hcs := &HealthCheckService{
-		client: http.DefaultClient,
-	}
+	hcs := &HealthCheckService{}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -380,8 +372,9 @@ func BenchmarkBuildTestRequest(b *testing.B) {
 func TestHealthCheck_ProxyLogging(t *testing.T) {
 	// 捕获日志输出
 	var logBuffer bytes.Buffer
+	oldOutput := log.Writer()
 	log.SetOutput(&logBuffer)
-	defer log.SetOutput(nil) // 恢复默认日志输出
+	defer log.SetOutput(oldOutput) // 恢复原始日志输出
 
 	// 创建测试服务器
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
