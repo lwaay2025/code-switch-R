@@ -746,7 +746,19 @@ func (hcs *HealthCheckService) buildTestRequest(platform, model string) []byte {
 		return data
 	}
 
-	// OpenAI/Codex 格式
+	// Codex 格式：不支持 max_tokens
+	if platform == "codex" {
+		reqBody := map[string]interface{}{
+			"model": model,
+			"messages": []map[string]string{
+				{"role": "user", "content": "hi"},
+			},
+		}
+		data, _ := json.Marshal(reqBody)
+		return data
+	}
+
+	// OpenAI 格式
 	reqBody := map[string]interface{}{
 		"model":      model,
 		"max_tokens": 1,

@@ -257,8 +257,7 @@ func (cts *ConnectivityTestService) buildTestRequest(platform string, provider *
 	// Codex 格式: /responses
 	if strings.Contains(endpoint, "/responses") {
 		reqBody := map[string]interface{}{
-			"model":      model,
-			"max_tokens": 1,
+			"model": model,
 			"messages": []map[string]string{
 				{"role": "user", "content": "hi"},
 			},
