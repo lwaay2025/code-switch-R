@@ -61,8 +61,6 @@ type ConnectivityTestService struct {
 	autoTestEnabled bool
 	stopChan        chan struct{}
 	running         bool
-
-	client *http.Client
 }
 
 // NewConnectivityTestService 创建连通性测试服务
@@ -81,7 +79,6 @@ func NewConnectivityTestService(
 			"gemini": {},
 		},
 		autoTestEnabled: false,
-		client:          GetHTTPClientWithTimeout(10 * time.Second),
 	}
 }
 
@@ -145,7 +142,9 @@ func (cts *ConnectivityTestService) TestProvider(ctx context.Context, provider P
 
 	// 发送请求并计时
 	start := time.Now()
-	resp, err := cts.client.Do(req)
+	// 动态获取最新的 HTTP 客户端，确保代理配置实时生效
+	client := GetHTTPClientWithTimeout(10 * time.Second)
+	resp, err := client.Do(req)
 	latencyMs := int(time.Since(start).Milliseconds())
 	result.LatencyMs = latencyMs
 
@@ -155,7 +154,7 @@ func (cts *ConnectivityTestService) TestProvider(ctx context.Context, provider P
 		if isTimeoutError(err) {
 			result.Status = StatusDegraded
 			result.SubStatus = SubStatusSlowLatency
-			result.Message = fmt.Sprintf("响应超时 (>%ds)", int(cts.client.Timeout.Seconds()))
+			result.Message = fmt.Sprintf("响应超时 (>%ds)", int(client.Timeout.Seconds()))
 			return result
 		}
 		// 真正的网络错误（连接失败、DNS 解析失败等）

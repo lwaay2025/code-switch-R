@@ -80,6 +80,14 @@ func GetHTTPClient() *http.Client {
 	return globalHTTPClient
 }
 
+// GetProxyConfig 获取当前的代理配置
+// 用于日志记录和状态检查
+func GetProxyConfig() ProxyConfig {
+	clientMutex.RLock()
+	defer clientMutex.RUnlock()
+	return currentProxyConfig
+}
+
 // GetHTTPClientWithTimeout 获取带指定超时的 HTTP 客户端
 // 这会复制全局客户端的配置但使用新的超时时间
 func GetHTTPClientWithTimeout(timeout time.Duration) *http.Client {
@@ -249,8 +257,8 @@ func createSOCKS5ProxyTransport(proxyAddr string) (*http.Transport, error) {
 	return transport, nil
 }
 
-// GetProxyConfig 从应用设置中获取代理配置
-func GetProxyConfig() (ProxyConfig, error) {
+// GetProxyConfigFromSettings 从应用设置中获取代理配置
+func GetProxyConfigFromSettings() (ProxyConfig, error) {
 	// 创建一个临时的 AppSettingsService 来读取配置
 	home, err := getUserHomeDir()
 	if err != nil {
