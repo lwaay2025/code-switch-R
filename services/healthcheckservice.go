@@ -746,13 +746,19 @@ func (hcs *HealthCheckService) buildTestRequest(platform, model string) []byte {
 		return data
 	}
 
-	// Codex 格式：不支持 max_tokens
+	// Codex Responses 协议
 	if platform == "codex" {
 		reqBody := map[string]interface{}{
 			"model": model,
-			"messages": []map[string]string{
-				{"role": "user", "content": "hi"},
+			"input": []map[string]interface{}{
+				{
+					"role": "user",
+					"content": []map[string]interface{}{
+						{"type": "text", "text": "hi"},
+					},
+				},
 			},
+			"max_output_tokens": 1,
 		}
 		data, _ := json.Marshal(reqBody)
 		return data

@@ -186,7 +186,9 @@ func TestBuildTestRequest(t *testing.T) {
 		model         string
 		expectNonNil  bool
 		validateModel bool
-		expectMax     bool
+		tokensField   string
+		expectInput   bool
+		expectMessage bool
 	}{
 		{
 			name:          "Codex 平台请求",
@@ -194,7 +196,9 @@ func TestBuildTestRequest(t *testing.T) {
 			model:         "gpt-4o-mini",
 			expectNonNil:  true,
 			validateModel: true,
-			expectMax:     false,
+			tokensField:   "max_output_tokens",
+			expectInput:   true,
+			expectMessage: false,
 		},
 		{
 			name:          "Claude 平台请求",
@@ -202,7 +206,9 @@ func TestBuildTestRequest(t *testing.T) {
 			model:         "claude-3-5-haiku-20241022",
 			expectNonNil:  true,
 			validateModel: true,
-			expectMax:     true,
+			tokensField:   "max_tokens",
+			expectInput:   false,
+			expectMessage: true,
 		},
 		{
 			name:          "映射后的模型名",
@@ -210,7 +216,9 @@ func TestBuildTestRequest(t *testing.T) {
 			model:         "openai/gpt-4o-mini",
 			expectNonNil:  true,
 			validateModel: true,
-			expectMax:     false,
+			tokensField:   "max_output_tokens",
+			expectInput:   true,
+			expectMessage: false,
 		},
 	}
 
@@ -245,12 +253,26 @@ func TestBuildTestRequest(t *testing.T) {
 					t.Errorf("Expected model %s in request body, got %s", tt.model, model)
 				}
 
-				_, hasMaxTokens := reqData["max_tokens"]
-				if tt.expectMax && !hasMaxTokens {
-					t.Error("Expected max_tokens in request body but not found")
+				if tt.tokensField != "" {
+					if _, ok := reqData[tt.tokensField]; !ok {
+						t.Errorf("Expected %s in request body but not found", tt.tokensField)
+					}
 				}
-				if !tt.expectMax && hasMaxTokens {
-					t.Error("max_tokens should not be included for this platform")
+
+				_, hasMessages := reqData["messages"]
+				if tt.expectMessage && !hasMessages {
+					t.Error("Expected messages in request body but not found")
+				}
+				if !tt.expectMessage && hasMessages {
+					t.Error("messages should not be included for this platform")
+				}
+
+				_, hasInput := reqData["input"]
+				if tt.expectInput && !hasInput {
+					t.Error("Expected input in request body but not found")
+				}
+				if !tt.expectInput && hasInput {
+					t.Error("input should not be included for this platform")
 				}
 			}
 		})
@@ -318,23 +340,41 @@ func TestHealthCheck_RequestBodyStructure(t *testing.T) {
 				t.Fatalf("Failed to parse request body: %v", err)
 			}
 
-			// 验证必需字段
-			requiredFields := []string{"model", "max_tokens", "messages"}
-			for _, field := range requiredFields {
-				if _, ok := reqData[field]; !ok {
-					t.Errorf("Required field %s is missing", field)
+			if platform == "claude" {
+				requiredFields := []string{"model", "max_tokens", "messages"}
+				for _, field := range requiredFields {
+					if _, ok := reqData[field]; !ok {
+						t.Errorf("Required field %s is missing", field)
+					}
+				}
+
+				messages, ok := reqData["messages"].([]interface{})
+				if !ok {
+					t.Error("messages field is not an array")
+					return
+				}
+				if len(messages) == 0 {
+					t.Error("messages array is empty")
 				}
 			}
 
-			// 验证 messages 结构
-			messages, ok := reqData["messages"].([]interface{})
-			if !ok {
-				t.Error("messages field is not an array")
-				return
-			}
+			if platform == "codex" {
+				requiredFields := []string{"model", "input", "max_output_tokens"}
+				for _, field := range requiredFields {
+					if _, ok := reqData[field]; !ok {
+						t.Errorf("Required field %s is missing", field)
+					}
+				}
 
-			if len(messages) == 0 {
-				t.Error("messages array is empty")
+				inputs, ok := reqData["input"].([]interface{})
+				if !ok {
+					t.Error("input field is not an array")
+					return
+				}
+				if len(inputs) == 0 {
+					t.Error("input array is empty")
+					return
+				}
 			}
 		})
 	}
