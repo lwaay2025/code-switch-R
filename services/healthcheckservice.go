@@ -32,7 +32,7 @@ const (
 // 默认配置常量
 const (
 	DefaultOperationalThresholdMs = 6000  // 默认正常阈值（毫秒）
-	DefaultTimeoutMs              = 15000 // 默认超时（毫秒）
+	DefaultTimeoutMs              = 20000 // 默认超时（毫秒）
 	DefaultPollIntervalSeconds    = 60    // 默认检测间隔（秒）
 	DefaultFailureThreshold       = 2     // 默认拉黑阈值（连续失败次数）
 	MaxConcurrentChecks           = 5     // 最大并发检测数
@@ -750,7 +750,7 @@ func (hcs *HealthCheckService) buildTestRequest(platform, model string) []byte {
 	if platform == "codex" {
 		reqBody := map[string]interface{}{
 			"model":             model,
-			"input":             "hi",
+			"input":             []string{"hi"},
 			"max_output_tokens": 1,
 		}
 		data, _ := json.Marshal(reqBody)

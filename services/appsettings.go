@@ -27,6 +27,7 @@ type AppSettings struct {
 	UseProxy             bool   `json:"use_proxy"`            // 是否启用代理服务器
 	ProxyAddress         string `json:"proxy_address"`        // 代理地址（如 http://127.0.0.1:1080）
 	ProxyType            string `json:"proxy_type"`           // 代理类型：http/https/socks5
+	UserAgent            string `json:"user_agent"`           // 全局 User-Agent
 }
 
 type AppSettingsService struct {
@@ -148,6 +149,7 @@ func (as *AppSettingsService) defaultSettings() AppSettings {
 		UseProxy:             false,  // 默认不使用代理
 		ProxyAddress:         "",     // 默认代理地址为空
 		ProxyType:            "http", // 默认代理类型为 HTTP
+		UserAgent:            DefaultUserAgent,
 	}
 }
 
@@ -155,7 +157,9 @@ func (as *AppSettingsService) defaultSettings() AppSettings {
 func (as *AppSettingsService) GetAppSettings() (AppSettings, error) {
 	as.mu.Lock()
 	defer as.mu.Unlock()
-	return as.loadLocked()
+	settings, err := as.loadLocked()
+	UpdateDefaultUserAgent(settings.UserAgent)
+	return settings, err
 }
 
 // SaveAppSettings persists the provided settings to disk.
@@ -190,6 +194,9 @@ func (as *AppSettingsService) SaveAppSettings(settings AppSettings) (AppSettings
 		// 代理配置更新失败不应阻止设置保存，只记录错误
 		fmt.Printf("⚠️  更新 HTTP 客户端代理配置失败: %v\n", err)
 	}
+
+	// 同步 User-Agent 到全局 HTTP 客户端
+	UpdateDefaultUserAgent(settings.UserAgent)
 
 	return settings, nil
 }

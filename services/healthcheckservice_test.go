@@ -366,18 +366,17 @@ func TestHealthCheck_RequestBodyStructure(t *testing.T) {
 					}
 				}
 
-				switch v := reqData["input"].(type) {
-				case string:
-					if strings.TrimSpace(v) == "" {
-						t.Error("input string should not be empty")
-					}
-				case []interface{}:
-					if len(v) == 0 {
-						t.Error("input array is empty")
-						return
-					}
-				default:
-					t.Errorf("unexpected input type %T", v)
+				v, ok := reqData["input"].([]interface{})
+				if !ok {
+					t.Errorf("input should be array, got %T", reqData["input"])
+					return
+				}
+				if len(v) == 0 {
+					t.Error("input array is empty")
+					return
+				}
+				if s, ok := v[0].(string); !ok || strings.TrimSpace(s) == "" {
+					t.Error("input array first element should be non-empty string")
 				}
 			}
 		})

@@ -33,6 +33,7 @@ const switchNotifyEnabled = ref(getCachedValue('switchNotify', true)) // 切换�
 const useProxy = ref(getCachedValue('useProxy', false))
 const proxyAddress = ref(localStorage.getItem('app-settings-proxyAddress') || '')
 const proxyType = ref(localStorage.getItem('app-settings-proxyType') || 'http')
+const userAgent = ref(localStorage.getItem('app-settings-userAgent') || 'code-switch-r/healthcheck')
 
 const settingsLoading = ref(true)
 const saveBusy = ref(false)
@@ -74,6 +75,7 @@ const loadAppSettings = async () => {
     useProxy.value = data?.use_proxy ?? false
     proxyAddress.value = data?.proxy_address ?? ''
     proxyType.value = data?.proxy_type ?? 'http'
+    userAgent.value = data?.user_agent ?? 'code-switch-r/healthcheck'
 
     // 缓存到 localStorage，下次打开时直接显示正确状态
     localStorage.setItem('app-settings-heatmap', String(heatmapEnabled.value))
@@ -85,6 +87,7 @@ const loadAppSettings = async () => {
     localStorage.setItem('app-settings-useProxy', String(useProxy.value))
     localStorage.setItem('app-settings-proxyAddress', proxyAddress.value)
     localStorage.setItem('app-settings-proxyType', proxyType.value)
+    localStorage.setItem('app-settings-userAgent', userAgent.value)
   } catch (error) {
     console.error('failed to load app settings', error)
     heatmapEnabled.value = true
@@ -96,6 +99,7 @@ const loadAppSettings = async () => {
     useProxy.value = false
     proxyAddress.value = ''
     proxyType.value = 'http'
+    userAgent.value = 'code-switch-r/healthcheck'
   } finally {
     settingsLoading.value = false
   }
@@ -115,6 +119,7 @@ const persistAppSettings = async () => {
       use_proxy: useProxy.value,
       proxy_address: proxyAddress.value,
       proxy_type: proxyType.value,
+      user_agent: userAgent.value,
     }
     await saveAppSettings(payload)
 
@@ -134,6 +139,7 @@ const persistAppSettings = async () => {
     localStorage.setItem('app-settings-autoUpdate', String(autoUpdateEnabled.value))
     localStorage.setItem('app-settings-autoConnectivityTest', String(autoConnectivityTestEnabled.value))
     localStorage.setItem('app-settings-switchNotify', String(switchNotifyEnabled.value))
+    localStorage.setItem('app-settings-userAgent', userAgent.value)
 
     window.dispatchEvent(new CustomEvent('app-settings-updated'))
   } catch (error) {
@@ -518,6 +524,20 @@ onMounted(async () => {
               />
             </ListItem>
           </template>
+
+          <ListItem :label="$t('components.general.label.userAgent')">
+            <div class="toggle-with-hint">
+              <input
+                type="text"
+                v-model="userAgent"
+                @blur="persistAppSettings"
+                :placeholder="$t('components.general.label.userAgentPlaceholder')"
+                :disabled="settingsLoading || saveBusy"
+                class="mac-input proxy-address-input"
+              />
+              <span class="hint-text">{{ $t('components.general.label.userAgentHint') }}</span>
+            </div>
+          </ListItem>
         </div>
       </section>
 

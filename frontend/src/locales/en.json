@@ -554,7 +554,10 @@
         "useProxyHint": "When enabled, all requests to vendor APIs will be forwarded through the proxy",
         "proxyType": "Proxy type",
         "proxyAddress": "Proxy address",
-        "proxyAddressPlaceholder": "e.g., http://127.0.0.1:1080 or socks5://127.0.0.1:1080"
+        "proxyAddressPlaceholder": "e.g., http://127.0.0.1:1080 or socks5://127.0.0.1:1080",
+        "userAgent": "Global User-Agent",
+        "userAgentHint": "Applied to availability checks and other HTTP requests when header not set",
+        "userAgentPlaceholder": "e.g., code-switch-r/healthcheck"
       },
       "subLabel": {
         "sb_assistant_access": "Accessibility permission is required to operate clipboard contents",

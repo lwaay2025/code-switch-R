@@ -555,7 +555,10 @@
         "useProxyHint": "启用后所有发往供应商 API 的请求将通过代理转发",
         "proxyType": "代理类型",
         "proxyAddress": "代理地址",
-        "proxyAddressPlaceholder": "例如：http://127.0.0.1:1080 或 socks5://127.0.0.1:1080"
+        "proxyAddressPlaceholder": "例如：http://127.0.0.1:1080 或 socks5://127.0.0.1:1080",
+        "userAgent": "全局 User-Agent",
+        "userAgentHint": "当请求未显式设置 User-Agent 时使用，适用于可用性检测等 HTTP 请求",
+        "userAgentPlaceholder": "如：code-switch-r/healthcheck"
       },
       "subLabel": {
         "sb_assistant_access": "需要无障碍访问权限来操作剪切板内容",

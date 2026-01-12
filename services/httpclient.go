@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,12 +15,16 @@ import (
 )
 
 var (
+	// DefaultUserAgent 默认的 User-Agent（可被设置覆盖）
+	DefaultUserAgent = "code-switch-r/healthcheck"
 	// globalHTTPClient 全局 HTTP 客户端实例
 	globalHTTPClient *http.Client
 	// clientMutex 保护全局客户端的并发访问
 	clientMutex sync.RWMutex
 	// currentProxyConfig 当前代理配置（用于检测配置变化）
 	currentProxyConfig ProxyConfig
+	// defaultUserAgent 当前全局 User-Agent
+	defaultUserAgent = DefaultUserAgent
 )
 
 // ProxyConfig 代理配置
@@ -43,6 +48,23 @@ func InitHTTPClient(config ProxyConfig) error {
 	globalHTTPClient = client
 	currentProxyConfig = config
 	return nil
+}
+
+// UpdateDefaultUserAgent 更新全局 User-Agent
+func UpdateDefaultUserAgent(ua string) {
+	clientMutex.Lock()
+	defer clientMutex.Unlock()
+	defaultUserAgent = strings.TrimSpace(ua)
+	if defaultUserAgent == "" {
+		defaultUserAgent = DefaultUserAgent
+	}
+}
+
+// GetDefaultUserAgent 获取当前的全局 User-Agent
+func GetDefaultUserAgent() string {
+	clientMutex.RLock()
+	defer clientMutex.RUnlock()
+	return defaultUserAgent
 }
 
 // UpdateHTTPClient 更新全局 HTTP 客户端的代理配置
@@ -116,7 +138,7 @@ func createHTTPClient(config ProxyConfig) (*http.Client, error) {
 	}
 
 	return &http.Client{
-		Transport: transport,
+		Transport: wrapTransportWithUserAgent(transport),
 		Timeout:   32 * time.Hour, // 与现有配置保持一致：32小时超时
 	}, nil
 }
@@ -124,7 +146,7 @@ func createHTTPClient(config ProxyConfig) (*http.Client, error) {
 // createDefaultHTTPClient 创建默认的 HTTP 客户端（不使用代理）
 func createDefaultHTTPClient() *http.Client {
 	return &http.Client{
-		Transport: &http.Transport{
+		Transport: wrapTransportWithUserAgent(&http.Transport{
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				Timeout:   30 * time.Second,
@@ -138,9 +160,25 @@ func createDefaultHTTPClient() *http.Client {
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: false,
 			},
-		},
+		}),
 		Timeout: 32 * time.Hour,
 	}
+}
+
+// wrapTransportWithUserAgent 为传输层添加全局 User-Agent
+func wrapTransportWithUserAgent(base http.RoundTripper) http.RoundTripper {
+	return &userAgentRoundTripper{base: base}
+}
+
+type userAgentRoundTripper struct {
+	base http.RoundTripper
+}
+
+func (u *userAgentRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if ua := GetDefaultUserAgent(); ua != "" && req.Header.Get("User-Agent") == "" {
+		req.Header.Set("User-Agent", ua)
+	}
+	return u.base.RoundTrip(req)
 }
 
 // createTransport 根据代理类型创建传输层

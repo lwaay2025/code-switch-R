@@ -21,6 +21,11 @@ export class AppSettings {
      */
     "enable_switch_notify": boolean;
 
+    /**
+     * 全局 User-Agent
+     */
+    "user_agent": string;
+
     /** Creates a new AppSettings instance. */
     constructor($$source: Partial<AppSettings> = {}) {
         if (!("show_heatmap" in $$source)) {
@@ -40,6 +45,9 @@ export class AppSettings {
         }
         if (!("enable_switch_notify" in $$source)) {
             this["enable_switch_notify"] = false;
+        }
+        if (!("user_agent" in $$source)) {
+            this["user_agent"] = "";
         }
 
         Object.assign(this, $$source);
