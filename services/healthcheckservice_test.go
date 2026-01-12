@@ -80,9 +80,11 @@ func TestHealthCheck_AcceptHeader(t *testing.T) {
 	// 创建测试服务器，检查请求头
 	var hasAcceptHeader bool
 	var acceptValue string
+	var userAgent string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		acceptValue = r.Header.Get("Accept")
 		hasAcceptHeader = acceptValue != ""
+		userAgent = r.Header.Get("User-Agent")
 
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"result": "ok"}`))
@@ -116,6 +118,11 @@ func TestHealthCheck_AcceptHeader(t *testing.T) {
 	expectedAccept := "application/json"
 	if acceptValue != expectedAccept {
 		t.Errorf("Accept header incorrect: expected %s, got %s", expectedAccept, acceptValue)
+	}
+
+	// 验证 User-Agent header
+	if userAgent == "" {
+		t.Errorf("User-Agent header missing")
 	}
 }
 

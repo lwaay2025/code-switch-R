@@ -36,6 +36,8 @@ type AppSettingsService struct {
 	autoStartService *AutoStartService
 }
 
+const appDefaultUserAgent = "code-switch-r/healthcheck"
+
 func NewAppSettingsService(autoStartService *AutoStartService) *AppSettingsService {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -149,7 +151,7 @@ func (as *AppSettingsService) defaultSettings() AppSettings {
 		UseProxy:             false,  // 默认不使用代理
 		ProxyAddress:         "",     // 默认代理地址为空
 		ProxyType:            "http", // 默认代理类型为 HTTP
-		UserAgent:            DefaultUserAgent,
+		UserAgent:            appDefaultUserAgent,
 	}
 }
 
@@ -158,7 +160,9 @@ func (as *AppSettingsService) GetAppSettings() (AppSettings, error) {
 	as.mu.Lock()
 	defer as.mu.Unlock()
 	settings, err := as.loadLocked()
-	UpdateDefaultUserAgent(settings.UserAgent)
+	if err == nil {
+		UpdateDefaultUserAgent(settings.UserAgent)
+	}
 	return settings, err
 }
 

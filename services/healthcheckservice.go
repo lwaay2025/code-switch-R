@@ -552,6 +552,9 @@ func (hcs *HealthCheckService) checkProvider(ctx context.Context, provider Provi
 	// 设置 Headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json") // 修复：添加 Accept 头，某些提供商或代理需要此头
+	if ua := strings.TrimSpace(GetDefaultUserAgent()); ua != "" {
+		req.Header.Set("User-Agent", ua)
+	}
 	if provider.APIKey != "" {
 		// 根据认证方式设置请求头
 		authTypeRaw := strings.TrimSpace(provider.ConnectivityAuthType)

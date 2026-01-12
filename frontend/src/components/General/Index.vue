@@ -35,6 +35,19 @@ const proxyAddress = ref(localStorage.getItem('app-settings-proxyAddress') || ''
 const proxyType = ref(localStorage.getItem('app-settings-proxyType') || 'http')
 const userAgent = ref(localStorage.getItem('app-settings-userAgent') || 'code-switch-r/healthcheck')
 
+const syncLocalCache = () => {
+  localStorage.setItem('app-settings-heatmap', String(heatmapEnabled.value))
+  localStorage.setItem('app-settings-homeTitle', String(homeTitleVisible.value))
+  localStorage.setItem('app-settings-autoStart', String(autoStartEnabled.value))
+  localStorage.setItem('app-settings-autoUpdate', String(autoUpdateEnabled.value))
+  localStorage.setItem('app-settings-autoConnectivityTest', String(autoConnectivityTestEnabled.value))
+  localStorage.setItem('app-settings-switchNotify', String(switchNotifyEnabled.value))
+  localStorage.setItem('app-settings-useProxy', String(useProxy.value))
+  localStorage.setItem('app-settings-proxyAddress', proxyAddress.value)
+  localStorage.setItem('app-settings-proxyType', proxyType.value)
+  localStorage.setItem('app-settings-userAgent', userAgent.value)
+}
+
 const settingsLoading = ref(true)
 const saveBusy = ref(false)
 
@@ -78,16 +91,7 @@ const loadAppSettings = async () => {
     userAgent.value = data?.user_agent ?? 'code-switch-r/healthcheck'
 
     // 缓存到 localStorage，下次打开时直接显示正确状态
-    localStorage.setItem('app-settings-heatmap', String(heatmapEnabled.value))
-    localStorage.setItem('app-settings-homeTitle', String(homeTitleVisible.value))
-    localStorage.setItem('app-settings-autoStart', String(autoStartEnabled.value))
-    localStorage.setItem('app-settings-autoUpdate', String(autoUpdateEnabled.value))
-    localStorage.setItem('app-settings-autoConnectivityTest', String(autoConnectivityTestEnabled.value))
-    localStorage.setItem('app-settings-switchNotify', String(switchNotifyEnabled.value))
-    localStorage.setItem('app-settings-useProxy', String(useProxy.value))
-    localStorage.setItem('app-settings-proxyAddress', proxyAddress.value)
-    localStorage.setItem('app-settings-proxyType', proxyType.value)
-    localStorage.setItem('app-settings-userAgent', userAgent.value)
+    syncLocalCache()
   } catch (error) {
     console.error('failed to load app settings', error)
     heatmapEnabled.value = true
@@ -133,13 +137,7 @@ const persistAppSettings = async () => {
     )
 
     // 更新缓存
-    localStorage.setItem('app-settings-heatmap', String(heatmapEnabled.value))
-    localStorage.setItem('app-settings-homeTitle', String(homeTitleVisible.value))
-    localStorage.setItem('app-settings-autoStart', String(autoStartEnabled.value))
-    localStorage.setItem('app-settings-autoUpdate', String(autoUpdateEnabled.value))
-    localStorage.setItem('app-settings-autoConnectivityTest', String(autoConnectivityTestEnabled.value))
-    localStorage.setItem('app-settings-switchNotify', String(switchNotifyEnabled.value))
-    localStorage.setItem('app-settings-userAgent', userAgent.value)
+    syncLocalCache()
 
     window.dispatchEvent(new CustomEvent('app-settings-updated'))
   } catch (error) {
