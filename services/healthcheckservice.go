@@ -32,7 +32,7 @@ const (
 // 默认配置常量
 const (
 	DefaultOperationalThresholdMs = 6000  // 默认正常阈值（毫秒）
-	DefaultTimeoutMs              = 15000 // 默认超时（毫秒）
+	DefaultTimeoutMs              = 20000 // 默认超时（毫秒）
 	DefaultPollIntervalSeconds    = 60    // 默认检测间隔（秒）
 	DefaultFailureThreshold       = 2     // 默认拉黑阈值（连续失败次数）
 	MaxConcurrentChecks           = 5     // 最大并发检测数
@@ -552,6 +552,9 @@ func (hcs *HealthCheckService) checkProvider(ctx context.Context, provider Provi
 	// 设置 Headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json") // 修复：添加 Accept 头，某些提供商或代理需要此头
+	if ua := strings.TrimSpace(GetDefaultUserAgent()); ua != "" {
+		req.Header.Set("User-Agent", ua)
+	}
 	if provider.APIKey != "" {
 		// 根据认证方式设置请求头
 		authTypeRaw := strings.TrimSpace(provider.ConnectivityAuthType)
@@ -750,7 +753,7 @@ func (hcs *HealthCheckService) buildTestRequest(platform, model string) []byte {
 	if platform == "codex" {
 		reqBody := map[string]interface{}{
 			"model":             model,
-			"input":             "hi",
+			"input":             []string{"hi"},
 			"max_output_tokens": 1,
 		}
 		data, _ := json.Marshal(reqBody)

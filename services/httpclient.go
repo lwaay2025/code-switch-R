@@ -7,20 +7,30 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/proxy"
 )
 
 var (
+	// DefaultUserAgentValue 默认的 User-Agent（可被设置覆盖）
+	DefaultUserAgentValue = "code-switch-r/healthcheck"
 	// globalHTTPClient 全局 HTTP 客户端实例
 	globalHTTPClient *http.Client
 	// clientMutex 保护全局客户端的并发访问
 	clientMutex sync.RWMutex
 	// currentProxyConfig 当前代理配置（用于检测配置变化）
 	currentProxyConfig ProxyConfig
+	// userAgentValue 当前全局 User-Agent（使用 atomic.Value 以减少锁开销）
+	userAgentValue atomic.Value
 )
+
+func init() {
+	userAgentValue.Store(DefaultUserAgentValue)
+}
 
 // ProxyConfig 代理配置
 type ProxyConfig struct {
@@ -43,6 +53,25 @@ func InitHTTPClient(config ProxyConfig) error {
 	globalHTTPClient = client
 	currentProxyConfig = config
 	return nil
+}
+
+// UpdateDefaultUserAgent 更新全局 User-Agent
+func UpdateDefaultUserAgent(ua string) {
+	trimmed := strings.TrimSpace(ua)
+	if trimmed == "" {
+		trimmed = DefaultUserAgentValue
+	}
+	userAgentValue.Store(trimmed)
+}
+
+// GetDefaultUserAgent 获取当前的全局 User-Agent
+func GetDefaultUserAgent() string {
+	if v := userAgentValue.Load(); v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return DefaultUserAgentValue
 }
 
 // UpdateHTTPClient 更新全局 HTTP 客户端的代理配置

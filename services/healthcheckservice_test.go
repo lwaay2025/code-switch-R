@@ -80,9 +80,11 @@ func TestHealthCheck_AcceptHeader(t *testing.T) {
 	// 创建测试服务器，检查请求头
 	var hasAcceptHeader bool
 	var acceptValue string
+	var userAgent string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		acceptValue = r.Header.Get("Accept")
 		hasAcceptHeader = acceptValue != ""
+		userAgent = r.Header.Get("User-Agent")
 
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"result": "ok"}`))
@@ -116,6 +118,11 @@ func TestHealthCheck_AcceptHeader(t *testing.T) {
 	expectedAccept := "application/json"
 	if acceptValue != expectedAccept {
 		t.Errorf("Accept header incorrect: expected %s, got %s", expectedAccept, acceptValue)
+	}
+
+	// 验证 User-Agent header
+	if userAgent == "" {
+		t.Errorf("User-Agent header missing")
 	}
 }
 
@@ -366,18 +373,17 @@ func TestHealthCheck_RequestBodyStructure(t *testing.T) {
 					}
 				}
 
-				switch v := reqData["input"].(type) {
-				case string:
-					if strings.TrimSpace(v) == "" {
-						t.Error("input string should not be empty")
-					}
-				case []interface{}:
-					if len(v) == 0 {
-						t.Error("input array is empty")
-						return
-					}
-				default:
-					t.Errorf("unexpected input type %T", v)
+				v, ok := reqData["input"].([]interface{})
+				if !ok {
+					t.Errorf("input should be array, got %T", reqData["input"])
+					return
+				}
+				if len(v) == 0 {
+					t.Error("input array is empty")
+					return
+				}
+				if s, ok := v[0].(string); !ok || strings.TrimSpace(s) == "" {
+					t.Error("input array first element should be non-empty string")
 				}
 			}
 		})

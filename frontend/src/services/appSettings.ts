@@ -10,6 +10,7 @@ export type AppSettings = {
   use_proxy: boolean // 是否启用代理服务器
   proxy_address: string // 代理地址
   proxy_type: string // 代理类型：http/https/socks5
+  user_agent: string // 全局 User-Agent
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -22,6 +23,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   use_proxy: false, // 默认不使用代理
   proxy_address: '', // 默认代理地址为空
   proxy_type: 'http', // 默认代理类型为 HTTP
+  user_agent: 'code-switch-r/healthcheck',
 }
 
 export const fetchAppSettings = async (): Promise<AppSettings> => {
