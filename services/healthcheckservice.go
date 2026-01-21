@@ -753,7 +753,10 @@ func (hcs *HealthCheckService) buildTestRequest(platform, model string) []byte {
 	if platform == "codex" {
 		reqBody := map[string]interface{}{
 			"model":             model,
-			"input":             []string{"hi"},
+			// Responses API: input 必须是数组；为兼容更多上游实现，使用消息对象形态
+			"input": []map[string]string{
+				{"role": "user", "content": "hi"},
+			},
 			"max_output_tokens": 1,
 		}
 		data, _ := json.Marshal(reqBody)

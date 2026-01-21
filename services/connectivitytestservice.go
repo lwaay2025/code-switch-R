@@ -258,12 +258,15 @@ func (cts *ConnectivityTestService) buildTestRequest(platform string, provider *
 	if strings.Contains(endpoint, "/responses") {
 		reqBody := map[string]interface{}{
 			"model": model,
-			"messages": []map[string]string{
+			// Responses API: input 必须是数组；使用消息对象形态以兼容更多上游实现
+			"input": []map[string]string{
 				{"role": "user", "content": "hi"},
 			},
+			"max_output_tokens": 1,
 		}
 		data, _ := json.Marshal(reqBody)
-		return data, "choices"
+		// 不做字段级内容校验：不同上游的 Responses 返回结构差异较大
+		return data, ""
 	}
 
 	// 默认 OpenAI 格式: /v1/chat/completions

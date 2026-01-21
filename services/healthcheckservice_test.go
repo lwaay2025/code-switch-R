@@ -382,8 +382,15 @@ func TestHealthCheck_RequestBodyStructure(t *testing.T) {
 					t.Error("input array is empty")
 					return
 				}
-				if s, ok := v[0].(string); !ok || strings.TrimSpace(s) == "" {
-					t.Error("input array first element should be non-empty string")
+				first, ok := v[0].(map[string]interface{})
+				if !ok {
+					t.Errorf("input array first element should be object, got %T", v[0])
+					return
+				}
+				role, _ := first["role"].(string)
+				content, _ := first["content"].(string)
+				if strings.TrimSpace(role) == "" || strings.TrimSpace(content) == "" {
+					t.Errorf("input first item missing role/content: %v", first)
 				}
 			}
 		})
