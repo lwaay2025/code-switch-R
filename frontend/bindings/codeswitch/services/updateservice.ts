@@ -69,7 +69,8 @@ export function LoadState(): $CancellablePromise<void> {
 }
 
 /**
- * PrepareUpdate 准备更新
+ * PrepareUpdate 准备更新（公开方法，保留兼容性）
+ * Deprecated: 建议使用 DownloadUpdate，它会自动调用内部 prepare 逻辑
  */
 export function PrepareUpdate(): $CancellablePromise<void> {
     return $Call.ByID(2497597027);
@@ -84,7 +85,7 @@ export function RestartApp(): $CancellablePromise<void> {
 }
 
 /**
- * SaveState 保存状态
+ * SaveState 保存状态（使用原子写入防止断电损坏）
  */
 export function SaveState(): $CancellablePromise<void> {
     return $Call.ByID(2602461199);
@@ -99,9 +100,18 @@ export function SetAutoCheckEnabled(enabled: boolean): $CancellablePromise<void>
 
 /**
  * StartDailyCheck 启动每日8点定时检查
+ * P1-3 修复：单次持锁完成检查+调度，消除竞态窗口
  */
 export function StartDailyCheck(): $CancellablePromise<void> {
     return $Call.ByID(1615992142);
+}
+
+/**
+ * StopDailyCheck 停止定时检查（公开方法，供外部调用）
+ * P1-3 修复：对 dailyCheckTimer 访问加锁
+ */
+export function StopDailyCheck(): $CancellablePromise<void> {
+    return $Call.ByID(3030210404);
 }
 
 // Private type creation functions

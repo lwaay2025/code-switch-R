@@ -4,3 +4,9 @@ frontend/dist
 .task
 bin
 CLAUDE.md
+.ace-tool/
+build\windows
+frontend/bindings/
+frontend/bindings/*.ts
+frontend/bindings/github.com/
+frontend\bindings\
