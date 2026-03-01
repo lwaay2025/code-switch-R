@@ -29,6 +29,13 @@ const showModal = ref(false)
 const editingPrompt = ref<Prompt | null>(null)
 const currentFileContent = ref<string | null>(null)
 const nameInputRef = ref<HTMLInputElement | null>(null)
+type PromptMapFromBinding = Awaited<ReturnType<typeof GetPrompts>>
+
+const normalizePromptMap = (value: PromptMapFromBinding): Record<string, Prompt> => {
+  return Object.fromEntries(
+    Object.entries(value ?? {}).filter((entry): entry is [string, Prompt] => !!entry[1])
+  )
+}
 
 // 表单
 const formData = ref({
@@ -46,7 +53,7 @@ const promptCount = computed(() => promptList.value.length)
 async function loadPrompts() {
   loading.value = true
   try {
-    prompts.value = await GetPrompts(activePlatform.value)
+    prompts.value = normalizePromptMap(await GetPrompts(activePlatform.value))
     currentFileContent.value = await GetCurrentFileContent(activePlatform.value)
   } catch (e) {
     console.error('Failed to load prompts:', e)

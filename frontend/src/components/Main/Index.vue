@@ -1519,24 +1519,8 @@ const loadUsageHeatmap = async () => {
 	}
 }
 
-// 本地 GeminiProvider 类型定义（避免依赖 CI 生成的 bindings）
-interface GeminiProvider {
-  id: string
-  name: string
-  websiteUrl?: string
-  apiKeyUrl?: string
-  baseUrl?: string
-  apiKey?: string
-  model?: string
-  description?: string
-  category?: string
-  partnerPromotionKey?: string
-  enabled: boolean
-  level?: number // 优先级分组 (1-10, 默认 1)
-  maxConcurrentRequests?: number
-  envConfig?: Record<string, string>
-  settingsConfig?: Record<string, any>
-}
+type GeminiProvider = Awaited<ReturnType<typeof GetGeminiProviders>> extends (infer P)[] ? P : never
+type GeminiProviderPayload = Parameters<typeof AddGeminiProvider>[0]
 
 const tabs = [
   { id: 'claude', label: 'Claude Code' },
@@ -1575,7 +1559,7 @@ const geminiToCard = (provider: GeminiProvider, index: number): AutomationCard =
 })
 
 // AutomationCard 到 Gemini Provider 的转换
-const cardToGemini = (card: AutomationCard, original: GeminiProvider): GeminiProvider => ({
+const cardToGemini = (card: AutomationCard, original: GeminiProvider): GeminiProviderPayload => ({
   ...original,
   name: card.name,
   baseUrl: card.apiUrl,
@@ -1645,7 +1629,7 @@ const persistProviders = async (tabId: ProviderTab) => {
           await UpdateGeminiProvider(cardToGemini(card, original))
         } else {
           // 新添加的 provider，调用 AddProvider
-          const newProvider: GeminiProvider = {
+          const newProvider: GeminiProviderPayload = {
             id: `gemini-${Date.now()}`,
             name: card.name,
             baseUrl: card.apiUrl,
@@ -1698,7 +1682,7 @@ const loadProvidersFromDisk = async () => {
         // Gemini 使用独立的加载逻辑
         const geminiProviders = await GetGeminiProviders()
         geminiProvidersCache.value = geminiProviders
-        cards.gemini.splice(0, cards.gemini.length, ...geminiProviders.map(geminiToCard))
+        cards.gemini.splice(0, cards.gemini.length, ...geminiProviders.map((provider, index) => geminiToCard(provider, index)))
         sortProvidersByLevel(cards.gemini)  // 初始排序：启用优先，Level 升序
       } else {
         const saved = await LoadProviders(tab)
