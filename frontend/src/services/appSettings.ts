@@ -11,6 +11,8 @@ export type AppSettings = {
   proxy_address: string // 代理地址
   proxy_type: string // 代理类型：http/https/socks5
   user_agent: string // 全局 User-Agent
+  log_retention_enabled: boolean // 是否启用日志保留
+  log_retention_days: number // 日志保留天数
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -24,6 +26,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   proxy_address: '', // 默认代理地址为空
   proxy_type: 'http', // 默认代理类型为 HTTP
   user_agent: 'code-switch-r/healthcheck',
+  log_retention_enabled: false,
+  log_retention_days: 30,
 }
 
 export const fetchAppSettings = async (): Promise<AppSettings> => {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,20 +54,23 @@ func (css *ClaudeSettingsService) ProxyStatus() (ClaudeProxyStatus, error) {
 	}
 	// 将 env 值转为字符串进行比较（nil 时返回空字符串）
 	baseURLVal := anyToString(env["ANTHROPIC_BASE_URL"])
-	baseURL := css.baseURL()
-	// 只检查 base_url 是否指向本地代理，因为：
-	// 1. base_url 是决定代理是否生效的关键字段
-	// 2. auth_token 可能被 Claude CLI 覆盖，但不影响代理功能
-	// 去除尾随斜杠以避免用户手动编辑时的小差异导致状态误判
-	enabled := strings.EqualFold(
-		strings.TrimSuffix(strings.TrimSpace(baseURLVal), "/"),
-		strings.TrimSuffix(strings.TrimSpace(baseURL), "/"),
-	)
+	enabled := css.isProxyBaseURL(baseURLVal)
 	status.Enabled = enabled
+	if enabled {
+		status.BaseURL = strings.TrimSpace(baseURLVal)
+	}
 	return status, nil
 }
 
 func (css *ClaudeSettingsService) EnableProxy() error {
+	return css.enableProxyWithProviderName("")
+}
+
+func (css *ClaudeSettingsService) EnableProxyWithProviderName(providerName string) error {
+	return css.enableProxyWithProviderName(providerName)
+}
+
+func (css *ClaudeSettingsService) enableProxyWithProviderName(providerName string) error {
 	settingsPath, backupPath, err := css.paths()
 	if err != nil {
 		return err
@@ -122,7 +126,7 @@ func (css *ClaudeSettingsService) EnableProxy() error {
 			TargetPath:        settingsPath,
 			FileExisted:       fileExisted,
 			EnvExisted:        envRaw != nil,
-			InjectedBaseURL:   css.baseURL(),
+			InjectedBaseURL:   css.proxyBaseURLWithProvider(providerName),
 			InjectedAuthToken: claudeAuthTokenValue,
 		}
 		if envRaw != nil {
@@ -146,7 +150,7 @@ func (css *ClaudeSettingsService) EnableProxy() error {
 		env = make(map[string]interface{})
 	}
 	env["ANTHROPIC_AUTH_TOKEN"] = claudeAuthTokenValue
-	env["ANTHROPIC_BASE_URL"] = css.baseURL()
+	env["ANTHROPIC_BASE_URL"] = css.proxyBaseURLWithProvider(providerName)
 	existingData["env"] = env
 
 	// 原子写入
@@ -190,12 +194,8 @@ func (css *ClaudeSettingsService) DisableProxy() error {
 		}
 
 		changed := false
-		proxyBaseURL := css.baseURL()
 		currentBaseURL := anyToString(env["ANTHROPIC_BASE_URL"])
-		if strings.EqualFold(
-			strings.TrimSuffix(strings.TrimSpace(currentBaseURL), "/"),
-			strings.TrimSuffix(strings.TrimSpace(proxyBaseURL), "/"),
-		) {
+		if css.isProxyBaseURL(currentBaseURL) {
 			delete(env, "ANTHROPIC_BASE_URL")
 			changed = true
 		}
@@ -264,7 +264,7 @@ func (css *ClaudeSettingsService) baseURL() string {
 		addr = ":18100"
 	}
 	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
-		return addr
+		return strings.TrimSuffix(strings.TrimSpace(addr), "/")
 	}
 	host := addr
 	if strings.HasPrefix(host, ":") {
@@ -273,7 +273,26 @@ func (css *ClaudeSettingsService) baseURL() string {
 	if !strings.Contains(host, "://") {
 		host = "http://" + host
 	}
-	return host
+	return strings.TrimSuffix(strings.TrimSpace(host), "/")
+}
+
+func (css *ClaudeSettingsService) proxyBaseURLWithProvider(providerName string) string {
+	base := css.baseURL()
+	name := strings.TrimSpace(providerName)
+	if name == "" {
+		return base
+	}
+	return base + "/" + url.PathEscape(name)
+}
+
+func (css *ClaudeSettingsService) isProxyBaseURL(baseURLVal string) bool {
+	candidate := strings.TrimSuffix(strings.TrimSpace(baseURLVal), "/")
+	base := css.baseURL()
+	if strings.EqualFold(candidate, base) {
+		return true
+	}
+	prefix := base + "/"
+	return strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(prefix))
 }
 
 // anyToString 将 any 类型安全转换为字符串，nil 返回空字符串

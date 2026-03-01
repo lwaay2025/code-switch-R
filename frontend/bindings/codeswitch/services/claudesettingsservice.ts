@@ -25,6 +25,10 @@ export function EnableProxy(): $CancellablePromise<void> {
     return $Call.ByID(78884094);
 }
 
+export function EnableProxyWithProviderName(providerName: string): $CancellablePromise<void> {
+    return $Call.ByID(2929078516, providerName);
+}
+
 /**
  * GetDirectAppliedProviderID 返回当前直连应用的 Provider ID
  * 通过读取 CLI 配置文件反推当前使用的 provider

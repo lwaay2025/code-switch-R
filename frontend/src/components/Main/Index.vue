@@ -716,6 +716,18 @@
                   <span class="field-hint">{{ t('components.main.form.hints.level') }}</span>
                 </div>
 
+                <label class="form-field">
+                  <span>{{ t('components.main.form.labels.maxConcurrentRequests') }}</span>
+                  <BaseInput
+                    v-model="modalState.form.maxConcurrentRequests"
+                    type="number"
+                    min="0"
+                    step="1"
+                    :placeholder="t('components.main.form.placeholders.maxConcurrentRequests')"
+                  />
+                  <span class="field-hint">{{ t('components.main.form.hints.maxConcurrentRequests') }}</span>
+                </label>
+
                 <div class="form-field">
                   <ModelWhitelistEditor v-model="modalState.form.supportedModels" />
                 </div>
@@ -1068,6 +1080,12 @@ const proxyStates = reactive<Record<ProviderTab, boolean>>({
   codex: false,
   gemini: false,
   others: false,
+})
+const proxyBaseURLs = reactive<Record<ProviderTab, string>>({
+  claude: '',
+  codex: '',
+  gemini: '',
+  others: '',
 })
 const proxyBusy = reactive<Record<ProviderTab, boolean>>({
   claude: false,
@@ -1515,6 +1533,7 @@ interface GeminiProvider {
   partnerPromotionKey?: string
   enabled: boolean
   level?: number // 优先级分组 (1-10, 默认 1)
+  maxConcurrentRequests?: number
   envConfig?: Record<string, string>
   settingsConfig?: Record<string, any>
 }
@@ -1548,6 +1567,7 @@ const geminiToCard = (provider: GeminiProvider, index: number): AutomationCard =
   accent: '#fb923c',
   enabled: provider.enabled,
   level: provider.level || 1,
+  maxConcurrentRequests: provider.maxConcurrentRequests ?? 0,
   // 可用性监控配置（Gemini 暂不支持，使用默认值）
   availabilityMonitorEnabled: false,
   connectivityAutoBlacklist: false,
@@ -1563,12 +1583,14 @@ const cardToGemini = (card: AutomationCard, original: GeminiProvider): GeminiPro
   websiteUrl: card.officialSite,
   enabled: card.enabled,
   level: card.level || 1,
+  maxConcurrentRequests: normalizeMaxConcurrentRequests(card.maxConcurrentRequests),
   // 注意：Gemini 不支持可用性监控配置，这些字段不会保存
 })
 
 const serializeProviders = (providers: AutomationCard[]) =>
   providers.map((provider) => ({
     ...provider,
+    maxConcurrentRequests: normalizeMaxConcurrentRequests(provider.maxConcurrentRequests),
     // 确保可用性配置正确序列化
     availabilityMonitorEnabled: !!provider.availabilityMonitorEnabled,
     connectivityAutoBlacklist: !!provider.connectivityAutoBlacklist,
@@ -1630,6 +1652,7 @@ const persistProviders = async (tabId: ProviderTab) => {
             apiKey: card.apiKey,
             websiteUrl: card.officialSite,
             enabled: card.enabled,
+            maxConcurrentRequests: normalizeMaxConcurrentRequests(card.maxConcurrentRequests),
           }
           await AddGeminiProvider(newProvider)
         }
@@ -1793,16 +1816,20 @@ const refreshProxyState = async (tab: ProviderTab) => {
       } else {
         proxyStates[tab] = false
       }
+      proxyBaseURLs[tab] = ''
     } else if (tab === 'gemini') {
       const status = await fetchGeminiProxyStatus()
       proxyStates[tab] = Boolean(status?.enabled)
+      proxyBaseURLs[tab] = ''
     } else {
       const status = await fetchProxyStatus(tab as 'claude' | 'codex')
       proxyStates[tab] = Boolean(status?.enabled)
+      proxyBaseURLs[tab] = status?.base_url || ''
     }
   } catch (error) {
     console.error(`Failed to fetch proxy status for ${tab}`, error)
     proxyStates[tab] = false
+    proxyBaseURLs[tab] = ''
   }
 }
 
@@ -2488,6 +2515,7 @@ type VendorForm = {
   supportedModels?: Record<string, boolean>
   modelMapping?: Record<string, string>
   level?: number
+  maxConcurrentRequests?: string
   apiEndpoint?: string
   cliConfig?: Record<string, any>
   // === 可用性监控配置（新） ===
@@ -2519,6 +2547,7 @@ const defaultFormValues = (platform?: string): VendorForm => ({
   officialSite: '',
   icon: defaultIconKey,
   level: 1,
+  maxConcurrentRequests: '0',
   enabled: true,
   supportedModels: {},
   modelMapping: {},
@@ -2562,6 +2591,12 @@ const normalizeLevel = (level: number | string | undefined): number => {
   if (!Number.isFinite(num) || num < 1) return 1
   if (num > 10) return 10
   return Math.floor(num)  // 确保返回整数
+}
+
+const normalizeMaxConcurrentRequests = (value: number | string | undefined): number => {
+  const num = Number(value)
+  if (!Number.isFinite(num) || num <= 0) return 0
+  return Math.floor(num)
 }
 
 // 按 enabled 和 level 排序：启用的排在前面，同启用状态下按 level 升序排序
@@ -2624,6 +2659,7 @@ const openEditModal = (card: AutomationCard) => {
     officialSite: card.officialSite,
     icon: card.icon,
     level: card.level || 1,
+    maxConcurrentRequests: String(card.maxConcurrentRequests ?? 0),
     enabled: card.enabled,
     supportedModels: card.supportedModels || {},
     modelMapping: card.modelMapping || {},
@@ -2703,6 +2739,7 @@ const submitModal = async () => {
       officialSite,
       icon,
       level: nextLevel,
+      maxConcurrentRequests: normalizeMaxConcurrentRequests(modalState.form.maxConcurrentRequests),
       enabled: modalState.form.enabled,
       supportedModels: modalState.form.supportedModels || {},
       modelMapping: modalState.form.modelMapping || {},
@@ -2739,6 +2776,7 @@ const submitModal = async () => {
       accent: '#0a84ff',
       tint: 'rgba(15, 23, 42, 0.12)',
       level: normalizeLevel(modalState.form.level),
+      maxConcurrentRequests: normalizeMaxConcurrentRequests(modalState.form.maxConcurrentRequests),
       enabled: modalState.form.enabled,
       supportedModels: modalState.form.supportedModels || {},
       modelMapping: modalState.form.modelMapping || {},

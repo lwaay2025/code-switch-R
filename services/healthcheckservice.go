@@ -178,7 +178,7 @@ func (hcs *HealthCheckService) GetLatestResults() (map[string][]ProviderTimeline
 	results := make(map[string][]ProviderTimeline)
 
 	// 遍历所有平台
-	for _, platform := range []string{"claude", "codex"} {
+	for _, platform := range []string{"claude", "codex", "gemini"} {
 		providers, err := hcs.providerService.LoadProviders(platform)
 		if err != nil {
 			log.Printf("[HealthCheck] 加载 %s 供应商失败: %v", platform, err)
@@ -441,7 +441,7 @@ func (hcs *HealthCheckService) RunSingleCheck(platform string, providerID int64)
 func (hcs *HealthCheckService) RunAllChecks() (map[string][]HealthCheckResult, error) {
 	results := make(map[string][]HealthCheckResult)
 
-	for _, platform := range []string{"claude", "codex"} {
+	for _, platform := range []string{"claude", "codex", "gemini"} {
 		platformResults := hcs.checkAllProviders(platform)
 		results[platform] = platformResults
 	}
@@ -552,6 +552,9 @@ func (hcs *HealthCheckService) checkProvider(ctx context.Context, provider Provi
 	// 设置 Headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json") // 修复：添加 Accept 头，某些提供商或代理需要此头
+	if strings.ToLower(platform) == "claude" {
+		req.Header.Set("anthropic-version", "2023-06-01")
+	}
 	if ua := strings.TrimSpace(GetDefaultUserAgent()); ua != "" {
 		req.Header.Set("User-Agent", ua)
 	}
@@ -623,7 +626,6 @@ func (hcs *HealthCheckService) checkProvider(ctx context.Context, provider Provi
 			platform, provider.Name, result.Status, latencyMs, proxyMode, err)
 		return result
 	}
-	defer resp.Body.Close()
 
 	// 读取响应体（限制大小）
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
@@ -631,12 +633,43 @@ func (hcs *HealthCheckService) checkProvider(ctx context.Context, provider Provi
 		body = []byte{}
 	}
 
+	// Codex 兼容性回退：部分上游仅接受 string input
+	if platform == "codex" && resp.StatusCode == http.StatusBadRequest {
+		_ = resp.Body.Close()
+
+		fallbackBody := hcs.buildTestRequestWithVariant(platform, mappedModel, "codex-input-string")
+		fallbackReq, reqErr := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(fallbackBody))
+		if reqErr == nil {
+			fallbackReq.Header = req.Header.Clone()
+
+			fallbackCtx, cancelFallback := context.WithTimeout(ctx, time.Duration(timeout)*time.Millisecond)
+			defer cancelFallback()
+			fallbackReq = fallbackReq.WithContext(fallbackCtx)
+
+			fallbackStart := time.Now()
+			fallbackResp, fallbackErr := client.Do(fallbackReq)
+			fallbackLatencyMs := int(time.Since(fallbackStart).Milliseconds())
+			if fallbackErr == nil {
+				resp = fallbackResp
+				result.LatencyMs = fallbackLatencyMs
+				body, err = io.ReadAll(io.LimitReader(resp.Body, 4096))
+				if err != nil {
+					body = []byte{}
+				}
+				log.Printf("[HealthCheck] [%s/%s] 请求格式回退生效: input=array -> input=string", platform, provider.Name)
+			} else {
+				log.Printf("[HealthCheck] [%s/%s] 请求格式回退失败: %v", platform, provider.Name, fallbackErr)
+			}
+		}
+	}
+	defer resp.Body.Close()
+
 	// 判定状态
-	result.Status, result.ErrorMessage = hcs.determineStatus(resp.StatusCode, latencyMs, body)
+	result.Status, result.ErrorMessage = hcs.determineStatus(resp.StatusCode, result.LatencyMs, body)
 
 	// 日志：检测完成
 	log.Printf("[HealthCheck] [%s/%s] 检测结果: %s, 延迟: %dms (模式: %s)",
-		platform, provider.Name, result.Status, latencyMs, proxyMode)
+		platform, provider.Name, result.Status, result.LatencyMs, proxyMode)
 
 	return result
 }
@@ -736,13 +769,24 @@ func (hcs *HealthCheckService) getEffectiveTimeout(provider *Provider) int {
 
 // buildTestRequest 构建测试请求体
 func (hcs *HealthCheckService) buildTestRequest(platform, model string) []byte {
+	return hcs.buildTestRequestWithVariant(platform, model, "default")
+}
+
+// buildTestRequestWithVariant 构建不同变体的测试请求体（用于兼容不同上游实现）
+func (hcs *HealthCheckService) buildTestRequestWithVariant(platform, model, variant string) []byte {
 	// Anthropic 格式
 	if platform == "claude" {
 		reqBody := map[string]interface{}{
 			"model":      model,
 			"max_tokens": 1,
-			"messages": []map[string]string{
-				{"role": "user", "content": "hi"},
+			"stream":     false,
+			"messages": []map[string]interface{}{
+				{
+					"role": "user",
+					"content": []map[string]string{
+						{"type": "text", "text": "hi"},
+					},
+				},
 			},
 		}
 		data, _ := json.Marshal(reqBody)
@@ -753,12 +797,19 @@ func (hcs *HealthCheckService) buildTestRequest(platform, model string) []byte {
 	if platform == "codex" {
 		reqBody := map[string]interface{}{
 			"model":             model,
-			// Responses API: input 必须是数组；为兼容更多上游实现，使用消息对象形态
-			"input": []map[string]string{
-				{"role": "user", "content": "hi"},
-			},
 			"max_output_tokens": 1,
 		}
+
+		if variant == "codex-input-string" {
+			// 某些兼容实现仅接受字符串 input
+			reqBody["input"] = "hi"
+		} else {
+			// Responses API: input 必须是数组；默认优先使用消息对象形态
+			reqBody["input"] = []map[string]string{
+				{"role": "user", "content": "hi"},
+			}
+		}
+
 		data, _ := json.Marshal(reqBody)
 		return data
 	}

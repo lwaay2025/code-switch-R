@@ -327,6 +327,7 @@
           "icon": "Icon",
           "enabled": "Enabled",
           "level": "Priority Level",
+          "maxConcurrentRequests": "Max Concurrent Requests",
           "availabilityMonitor": "Availability Monitoring",
           "connectivityAutoBlacklist": "Auto-Blacklist on Failure",
           "availabilityTestModel": "Test Model (optional)",
@@ -344,6 +345,7 @@
           "apiEndpoint": "Leave blank for default, e.g. /v1/chat/completions",
           "officialSite": "https://vendor.com",
           "icon": "e.g. aicoding, kimi",
+          "maxConcurrentRequests": "0 for unlimited",
           "availabilityTestModel": "Leave empty to use platform default",
           "availabilityTestEndpoint": "e.g., /v1/messages",
           "connectivityTestModel": "Select or use default",
@@ -353,6 +355,7 @@
         },
         "hints": {
           "level": "Lower numbers = higher priority. Level 1 providers are tried first, then Level 2, etc.",
+          "maxConcurrentRequests": "Limit in-flight requests per provider; 0 means unlimited.",
           "apiEndpoint": "Override platform default endpoint. Leave blank for default (claude: /v1/messages, codex: /responses). For GLM models use /v1/chat/completions",
           "availabilityMonitor": "Enable background health checks for this provider. Checks are performed periodically to monitor availability.",
           "connectivityAutoBlacklist": "Automatically blacklist this provider if health checks fail repeatedly",
@@ -459,6 +462,7 @@
         "platform": "Platform",
         "allPlatforms": "All platforms",
         "provider": "Provider",
+        "date": "Date",
         "allProviders": "All providers",
         "providerPlaceholder": "Provider name",
         "limit": "Limit"
@@ -477,7 +481,8 @@
         "cache": "Cache reads",
         "cacheHint": "Read hits across responses",
         "costHint": "24h total cost",
-        "todayScope": "Today · {date}"
+        "todayScope": "Date · {date}",
+        "dateScope": "Date · {date}"
       },
       "table": {
         "time": "Time",
@@ -503,8 +508,8 @@
       "nextRefresh": "Next refresh in {seconds}s",
       "query": "Query",
       "costDetail": {
-        "title": "Today's Cost Breakdown",
-        "empty": "No cost records today"
+        "title": "Cost Breakdown",
+        "empty": "No cost records on selected date"
       }
     },
     "general": {
@@ -531,6 +536,9 @@
         "autoStart": "Launch at login",
         "switchNotify": "Switch Notification",
         "switchNotifyHint": "Send system notification when provider switches or gets blacklisted",
+        "logRetention": "Log Retention",
+        "logRetentionHint": "Automatically remove request logs older than the retention period",
+        "logRetentionDays": "Retention Period",
         "autoUpdate": "Automatic update",
         "autoConnectivityTest": "Auto Availability Monitoring",
         "autoConnectivityTestHint": "Automatically check availability of monitored providers every minute",
@@ -548,6 +556,7 @@
         "enableLevelBlacklistHint": "When enabled, use graduated blacklist mechanism (L1-L5); when disabled, use fixed duration",
         "times": "times",
         "minutes": "minutes",
+        "days": "days",
         "save": "Save",
         "saving": "Saving...",
         "useProxy": "Use proxy server",
@@ -774,6 +783,7 @@
         "baseUrl": "API URL",
         "apiKey": "API Key",
         "model": "Default model",
+        "maxConcurrentRequests": "Max Concurrent Requests",
         "cancel": "Cancel",
         "save": "Save",
         "delete": "Delete"

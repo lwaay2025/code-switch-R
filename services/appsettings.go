@@ -28,6 +28,8 @@ type AppSettings struct {
 	ProxyAddress         string `json:"proxy_address"`        // 代理地址（如 http://127.0.0.1:1080）
 	ProxyType            string `json:"proxy_type"`           // 代理类型：http/https/socks5
 	UserAgent            string `json:"user_agent"`           // 全局 User-Agent
+	LogRetentionEnabled  bool   `json:"log_retention_enabled"`
+	LogRetentionDays     int    `json:"log_retention_days"`
 }
 
 type AppSettingsService struct {
@@ -37,6 +39,11 @@ type AppSettingsService struct {
 }
 
 const appDefaultUserAgent = "code-switch-r/healthcheck"
+const (
+	defaultLogRetentionDays = 30
+	minLogRetentionDays     = 1
+	maxLogRetentionDays     = 3650
+)
 
 func NewAppSettingsService(autoStartService *AutoStartService) *AppSettingsService {
 	home, err := os.UserHomeDir()
@@ -152,6 +159,8 @@ func (as *AppSettingsService) defaultSettings() AppSettings {
 		ProxyAddress:         "",     // 默认代理地址为空
 		ProxyType:            "http", // 默认代理类型为 HTTP
 		UserAgent:            appDefaultUserAgent,
+		LogRetentionEnabled:  false,
+		LogRetentionDays:     defaultLogRetentionDays,
 	}
 }
 
@@ -170,6 +179,7 @@ func (as *AppSettingsService) GetAppSettings() (AppSettings, error) {
 func (as *AppSettingsService) SaveAppSettings(settings AppSettings) (AppSettings, error) {
 	as.mu.Lock()
 	defer as.mu.Unlock()
+	normalizeLogRetentionSettings(&settings)
 
 	// 同步开机自启动状态
 	if as.autoStartService != nil {
@@ -220,7 +230,25 @@ func (as *AppSettingsService) loadLocked() (AppSettings, error) {
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return settings, err
 	}
+	normalizeLogRetentionSettings(&settings)
 	return settings, nil
+}
+
+func normalizeLogRetentionSettings(settings *AppSettings) {
+	if settings == nil {
+		return
+	}
+	if settings.LogRetentionDays <= 0 {
+		settings.LogRetentionDays = defaultLogRetentionDays
+		return
+	}
+	if settings.LogRetentionDays < minLogRetentionDays {
+		settings.LogRetentionDays = minLogRetentionDays
+		return
+	}
+	if settings.LogRetentionDays > maxLogRetentionDays {
+		settings.LogRetentionDays = maxLogRetentionDays
+	}
 }
 
 func (as *AppSettingsService) saveLocked(settings AppSettings) error {

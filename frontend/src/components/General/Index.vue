@@ -34,6 +34,18 @@ const useProxy = ref(getCachedValue('useProxy', false))
 const proxyAddress = ref(localStorage.getItem('app-settings-proxyAddress') || '')
 const proxyType = ref(localStorage.getItem('app-settings-proxyType') || 'http')
 const userAgent = ref(localStorage.getItem('app-settings-userAgent') || 'code-switch-r/healthcheck')
+const normalizeRetentionDays = (value: number | string): number => {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return 30
+  const integer = Math.floor(parsed)
+  if (integer < 1) return 1
+  if (integer > 3650) return 3650
+  return integer
+}
+const logRetentionEnabled = ref(getCachedValue('logRetentionEnabled', false))
+const logRetentionDays = ref(normalizeRetentionDays(localStorage.getItem('app-settings-logRetentionDays') || '30'))
+const lastSavedLogRetentionEnabled = ref(logRetentionEnabled.value)
+const lastSavedLogRetentionDays = ref(logRetentionDays.value)
 
 const syncLocalCache = () => {
   localStorage.setItem('app-settings-heatmap', String(heatmapEnabled.value))
@@ -46,6 +58,8 @@ const syncLocalCache = () => {
   localStorage.setItem('app-settings-proxyAddress', proxyAddress.value)
   localStorage.setItem('app-settings-proxyType', proxyType.value)
   localStorage.setItem('app-settings-userAgent', userAgent.value)
+  localStorage.setItem('app-settings-logRetentionEnabled', String(logRetentionEnabled.value))
+  localStorage.setItem('app-settings-logRetentionDays', String(logRetentionDays.value))
 }
 
 const settingsLoading = ref(true)
@@ -89,6 +103,10 @@ const loadAppSettings = async () => {
     proxyAddress.value = data?.proxy_address ?? ''
     proxyType.value = data?.proxy_type ?? 'http'
     userAgent.value = data?.user_agent ?? 'code-switch-r/healthcheck'
+    logRetentionEnabled.value = data?.log_retention_enabled ?? false
+    logRetentionDays.value = normalizeRetentionDays(data?.log_retention_days ?? 30)
+    lastSavedLogRetentionEnabled.value = logRetentionEnabled.value
+    lastSavedLogRetentionDays.value = logRetentionDays.value
 
     // 缓存到 localStorage，下次打开时直接显示正确状态
     syncLocalCache()
@@ -104,6 +122,10 @@ const loadAppSettings = async () => {
     proxyAddress.value = ''
     proxyType.value = 'http'
     userAgent.value = 'code-switch-r/healthcheck'
+    logRetentionEnabled.value = false
+    logRetentionDays.value = 30
+    lastSavedLogRetentionEnabled.value = false
+    lastSavedLogRetentionDays.value = 30
   } finally {
     settingsLoading.value = false
   }
@@ -113,6 +135,10 @@ const persistAppSettings = async () => {
   if (settingsLoading.value || saveBusy.value) return
   saveBusy.value = true
   try {
+    logRetentionDays.value = normalizeRetentionDays(logRetentionDays.value)
+    const retentionChanged =
+      lastSavedLogRetentionEnabled.value !== logRetentionEnabled.value ||
+      lastSavedLogRetentionDays.value !== logRetentionDays.value
     const payload: AppSettings = {
       show_heatmap: heatmapEnabled.value,
       show_home_title: homeTitleVisible.value,
@@ -124,6 +150,8 @@ const persistAppSettings = async () => {
       proxy_address: proxyAddress.value,
       proxy_type: proxyType.value,
       user_agent: userAgent.value,
+      log_retention_enabled: logRetentionEnabled.value,
+      log_retention_days: logRetentionDays.value,
     }
     await saveAppSettings(payload)
 
@@ -135,9 +163,14 @@ const persistAppSettings = async () => {
       'codeswitch/services.HealthCheckService.SetAutoAvailabilityPolling',
       autoConnectivityTestEnabled.value
     )
+    if (retentionChanged && logRetentionEnabled.value) {
+      await Call.ByName('codeswitch/services.LogService.RunRetentionCleanup')
+    }
 
     // 更新缓存
     syncLocalCache()
+    lastSavedLogRetentionEnabled.value = logRetentionEnabled.value
+    lastSavedLogRetentionDays.value = logRetentionDays.value
 
     window.dispatchEvent(new CustomEvent('app-settings-updated'))
   } catch (error) {
@@ -456,6 +489,34 @@ onMounted(async () => {
               </label>
               <span class="hint-text">{{ $t('components.general.label.switchNotifyHint') }}</span>
             </div>
+          </ListItem>
+          <ListItem :label="$t('components.general.label.logRetention')">
+            <div class="toggle-with-hint">
+              <label class="mac-switch">
+                <input
+                  type="checkbox"
+                  :disabled="settingsLoading || saveBusy"
+                  v-model="logRetentionEnabled"
+                  @change="persistAppSettings"
+                />
+                <span></span>
+              </label>
+              <span class="hint-text">{{ $t('components.general.label.logRetentionHint') }}</span>
+            </div>
+          </ListItem>
+          <ListItem v-if="logRetentionEnabled" :label="$t('components.general.label.logRetentionDays')">
+            <select
+              v-model.number="logRetentionDays"
+              :disabled="settingsLoading || saveBusy"
+              @change="persistAppSettings"
+              class="mac-select">
+              <option :value="7">7 {{ $t('components.general.label.days') }}</option>
+              <option :value="14">14 {{ $t('components.general.label.days') }}</option>
+              <option :value="30">30 {{ $t('components.general.label.days') }}</option>
+              <option :value="90">90 {{ $t('components.general.label.days') }}</option>
+              <option :value="180">180 {{ $t('components.general.label.days') }}</option>
+              <option :value="365">365 {{ $t('components.general.label.days') }}</option>
+            </select>
           </ListItem>
         </div>
       </section>

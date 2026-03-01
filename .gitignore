@@ -10,3 +10,4 @@ frontend/bindings/
 frontend/bindings/*.ts
 frontend/bindings/github.com/
 frontend\bindings\
+codeswitch.exe

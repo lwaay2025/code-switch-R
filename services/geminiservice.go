@@ -14,28 +14,29 @@ import (
 type GeminiAuthType string
 
 const (
-	GeminiAuthOAuth      GeminiAuthType = "oauth-personal"   // Google 官方 OAuth
-	GeminiAuthAPIKey     GeminiAuthType = "gemini-api-key"   // API Key 认证
-	GeminiAuthPackycode  GeminiAuthType = "packycode"        // PackyCode 合作方
-	GeminiAuthGeneric    GeminiAuthType = "generic"          // 通用第三方
+	GeminiAuthOAuth     GeminiAuthType = "oauth-personal" // Google 官方 OAuth
+	GeminiAuthAPIKey    GeminiAuthType = "gemini-api-key" // API Key 认证
+	GeminiAuthPackycode GeminiAuthType = "packycode"      // PackyCode 合作方
+	GeminiAuthGeneric   GeminiAuthType = "generic"        // 通用第三方
 )
 
 // GeminiProvider Gemini 供应商配置
 type GeminiProvider struct {
-	ID                  string            `json:"id"`
-	Name                string            `json:"name"`
-	WebsiteURL          string            `json:"websiteUrl,omitempty"`
-	APIKeyURL           string            `json:"apiKeyUrl,omitempty"`
-	BaseURL             string            `json:"baseUrl,omitempty"`
-	APIKey              string            `json:"apiKey,omitempty"`
-	Model               string            `json:"model,omitempty"`
-	Description         string            `json:"description,omitempty"`
-	Category            string            `json:"category,omitempty"`            // official, third_party, custom
-	PartnerPromotionKey string            `json:"partnerPromotionKey,omitempty"` // 用于识别供应商类型
-	Enabled             bool              `json:"enabled"`
-	Level               int               `json:"level,omitempty"`               // 优先级分组 (1-10, 默认 1)
-	EnvConfig           map[string]string `json:"envConfig,omitempty"`           // .env 配置
-	SettingsConfig      map[string]any    `json:"settingsConfig,omitempty"`      // settings.json 配置
+	ID                    string            `json:"id"`
+	Name                  string            `json:"name"`
+	WebsiteURL            string            `json:"websiteUrl,omitempty"`
+	APIKeyURL             string            `json:"apiKeyUrl,omitempty"`
+	BaseURL               string            `json:"baseUrl,omitempty"`
+	APIKey                string            `json:"apiKey,omitempty"`
+	Model                 string            `json:"model,omitempty"`
+	Description           string            `json:"description,omitempty"`
+	Category              string            `json:"category,omitempty"`            // official, third_party, custom
+	PartnerPromotionKey   string            `json:"partnerPromotionKey,omitempty"` // 用于识别供应商类型
+	Enabled               bool              `json:"enabled"`
+	Level                 int               `json:"level,omitempty"`                 // 优先级分组 (1-10, 默认 1)
+	MaxConcurrentRequests int               `json:"maxConcurrentRequests,omitempty"` // 最大并发请求数（0=不限制）
+	EnvConfig             map[string]string `json:"envConfig,omitempty"`             // .env 配置
+	SettingsConfig        map[string]any    `json:"settingsConfig,omitempty"`        // settings.json 配置
 }
 
 // GeminiPreset 预设供应商
@@ -53,12 +54,12 @@ type GeminiPreset struct {
 
 // GeminiStatus Gemini 配置状态
 type GeminiStatus struct {
-	Enabled        bool           `json:"enabled"`
+	Enabled         bool           `json:"enabled"`
 	CurrentProvider string         `json:"currentProvider,omitempty"`
-	AuthType       GeminiAuthType `json:"authType"`
-	HasAPIKey      bool           `json:"hasApiKey"`
-	HasBaseURL     bool           `json:"hasBaseUrl"`
-	Model          string         `json:"model,omitempty"`
+	AuthType        GeminiAuthType `json:"authType"`
+	HasAPIKey       bool           `json:"hasApiKey"`
+	HasBaseURL      bool           `json:"hasBaseUrl"`
+	Model           string         `json:"model,omitempty"`
 }
 
 // GeminiService Gemini 配置管理服务

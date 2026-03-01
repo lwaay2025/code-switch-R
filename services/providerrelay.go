@@ -33,6 +33,7 @@ type ProviderRelayService struct {
 	geminiService       *GeminiService
 	blacklistService    *BlacklistService
 	notificationService *NotificationService
+	concurrencyManager  *ProviderConcurrencyManager
 	server              *http.Server
 	addr                string
 	lastUsed            map[string]*LastUsedProvider // 各平台最后使用的供应商
@@ -41,6 +42,37 @@ type ProviderRelayService struct {
 
 // errClientAbort 表示客户端中断连接，不应计入 provider 失败次数
 var errClientAbort = errors.New("client aborted, skip failure count")
+
+// errTokenZero 表示上游返回 2xx，但解析到 output_tokens=0（视为失败）
+var errTokenZero = errors.New("output_tokens is 0")
+
+func isLikelyClientAbortErr(c *gin.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
+		return true
+	}
+	lowerMsg := strings.ToLower(err.Error())
+	abortHints := []string{
+		"broken pipe",
+		"connection reset by peer",
+		"connection aborted",
+		"client disconnected",
+		"context canceled",
+		"operation was canceled",
+		"use of closed network connection",
+	}
+	for _, hint := range abortHints {
+		if strings.Contains(lowerMsg, hint) {
+			return true
+		}
+	}
+	return false
+}
 
 func NewProviderRelayService(providerService *ProviderService, geminiService *GeminiService, blacklistService *BlacklistService, notificationService *NotificationService, addr string) *ProviderRelayService {
 	if addr == "" {
@@ -55,6 +87,7 @@ func NewProviderRelayService(providerService *ProviderService, geminiService *Ge
 		geminiService:       geminiService,
 		blacklistService:    blacklistService,
 		notificationService: notificationService,
+		concurrencyManager:  NewProviderConcurrencyManager(),
 		addr:                addr,
 		lastUsed: map[string]*LastUsedProvider{
 			"claude": nil,
@@ -189,7 +222,11 @@ func (prs *ProviderRelayService) Addr() string {
 
 func (prs *ProviderRelayService) registerRoutes(router gin.IRouter) {
 	router.POST("/v1/messages", prs.proxyHandler("claude", "/v1/messages"))
+	router.POST("/:providerName/v1/messages", prs.proxyHandler("claude", "/v1/messages"))
 	router.POST("/responses", prs.proxyHandler("codex", "/responses"))
+	router.POST("/responses/compact", prs.proxyHandler("codex", "/responses"))
+	router.POST("/:providerName/responses", prs.proxyHandler("codex", "/responses"))
+	router.POST("/:providerName/responses/compact", prs.proxyHandler("codex", "/responses"))
 
 	// /v1/models 端点（OpenAI-compatible API）
 	// 默认走 Codex 平台（OpenAI/GPT 风格）
@@ -231,6 +268,105 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 		providers, err := prs.providerService.LoadProviders(kind)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load providers"})
+			return
+		}
+
+		providerName := strings.TrimSpace(c.Param("providerName"))
+		if providerName != "" {
+			var selected *Provider
+			for i := range providers {
+				if strings.EqualFold(strings.TrimSpace(providers[i].Name), providerName) {
+					selected = &providers[i]
+					break
+				}
+			}
+
+			if selected == nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("provider '%s' not found", providerName)})
+				return
+			}
+
+			provider := *selected
+			if !provider.Enabled {
+				c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("provider '%s' is disabled", provider.Name)})
+				return
+			}
+			if strings.TrimSpace(provider.APIURL) == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("provider '%s' missing api url", provider.Name)})
+				return
+			}
+			if strings.TrimSpace(provider.APIKey) == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("provider '%s' missing api key", provider.Name)})
+				return
+			}
+			if errs := provider.ValidateConfiguration(); len(errs) > 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("provider '%s' invalid configuration", provider.Name), "details": errs})
+				return
+			}
+			if requestedModel != "" && !provider.IsModelSupported(requestedModel) {
+				c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("provider '%s' does not support model '%s'", provider.Name, requestedModel)})
+				return
+			}
+			if isBlacklisted, until := prs.blacklistService.IsBlacklisted(kind, provider.Name); isBlacklisted {
+				c.JSON(http.StatusForbidden, gin.H{
+					"error":      fmt.Sprintf("provider '%s' is blacklisted", provider.Name),
+					"blacklisted": true,
+					"until":      until.Unix(),
+				})
+				return
+			}
+
+			effectiveModel := provider.GetEffectiveModel(requestedModel)
+			currentBodyBytes := bodyBytes
+			if effectiveModel != requestedModel && requestedModel != "" {
+				modifiedBody, err := ReplaceModelInRequestBody(bodyBytes, effectiveModel)
+				if err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "failed to map requested model"})
+					return
+				}
+				currentBodyBytes = modifiedBody
+			}
+
+			query := flattenQuery(c.Request.URL.Query())
+			clientHeaders := cloneHeaders(c.Request.Header)
+			effectiveEndpoint := provider.GetEffectiveEndpoint(endpoint)
+			release, acquired := prs.concurrencyManager.TryAcquire(
+				providerConcurrencyKey(kind, provider.Name),
+				provider.MaxConcurrentRequests,
+			)
+			if !acquired {
+				c.JSON(http.StatusTooManyRequests, gin.H{"error": "provider is busy"})
+				return
+			}
+
+			ok, forwardErr, responseWritten := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
+			release()
+			if ok {
+				if err := prs.blacklistService.RecordSuccess(kind, provider.Name); err != nil {
+					fmt.Printf("[WARN] 清零失败计数失败: %v\n", err)
+				}
+				prs.setLastUsedProvider(kind, provider.Name)
+				return
+			}
+
+			if errors.Is(forwardErr, errClientAbort) {
+				return
+			}
+			if err := prs.blacklistService.RecordFailure(kind, provider.Name); err != nil {
+				fmt.Printf("[ERROR] 记录失败到黑名单失败: %v\n", err)
+			}
+			if responseWritten {
+				return
+			}
+
+			errorMsg := "unknown error"
+			if forwardErr != nil {
+				errorMsg = forwardErr.Error()
+			}
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error":        fmt.Sprintf("provider '%s' request failed: %s", provider.Name, errorMsg),
+				"provider_name": provider.Name,
+			})
 			return
 		}
 
@@ -324,6 +460,8 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 			var lastError error
 			var lastProvider string
 			totalAttempts := 0
+			busySkipped := 0
+			attemptedUpstream := false
 
 			// 遍历所有 Level 和 Provider
 			for _, level := range levels {
@@ -355,8 +493,6 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 
 					// 同 Provider 内重试循环
 					for retryCount := 0; retryCount < maxRetryPerProvider; retryCount++ {
-						totalAttempts++
-
 						// 再次检查是否已被拉黑（重试过程中可能被拉黑）
 						if blacklisted, _ := prs.blacklistService.IsBlacklisted(kind, provider.Name); blacklisted {
 							fmt.Printf("[INFO] 🚫 Provider %s 已被拉黑，切换到下一个\n", provider.Name)
@@ -366,9 +502,22 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 						fmt.Printf("[INFO] [拉黑模式] Provider: %s (Level %d) | 重试 %d/%d | Model: %s\n",
 							provider.Name, level, retryCount+1, maxRetryPerProvider, effectiveModel)
 
+						release, acquired := prs.concurrencyManager.TryAcquire(
+							providerConcurrencyKey(kind, provider.Name),
+							provider.MaxConcurrentRequests,
+						)
+						if !acquired {
+							busySkipped++
+							fmt.Printf("[INFO] ⏭️ Provider %s 达到并发上限(%d)，跳过到下一个\n", provider.Name, provider.MaxConcurrentRequests)
+							break
+						}
+
+						totalAttempts++
+						attemptedUpstream = true
 						startTime := time.Now()
-						ok, err := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
+						ok, err, responseWritten := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
 						duration := time.Since(startTime)
+						release()
 
 						if ok {
 							fmt.Printf("[INFO] ✓ 成功: %s | 重试 %d 次 | 耗时: %.2fs\n",
@@ -402,6 +551,11 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 							fmt.Printf("[ERROR] 记录失败到黑名单失败: %v\n", err)
 						}
 
+						if responseWritten {
+							fmt.Printf("[WARN] 响应已写入客户端，停止重试与降级\n")
+							return
+						}
+
 						// 检查是否刚被拉黑
 						if blacklisted, _ := prs.blacklistService.IsBlacklisted(kind, provider.Name); blacklisted {
 							fmt.Printf("[INFO] 🚫 Provider %s 达到失败阈值，已被拉黑，切换到下一个\n", provider.Name)
@@ -418,6 +572,15 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 			}
 
 			// 所有 Provider 都失败或被拉黑
+			if !attemptedUpstream && busySkipped > 0 {
+				c.JSON(http.StatusTooManyRequests, gin.H{
+					"error":          "all providers are busy",
+					"mode":           "concurrency_limit",
+					"busy_providers": busySkipped,
+				})
+				return
+			}
+
 			fmt.Printf("[ERROR] 💥 拉黑模式：所有 Provider 都失败或被拉黑（共尝试 %d 次）\n", totalAttempts)
 
 			errorMsg := "未知错误"
@@ -441,14 +604,14 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 		var lastProvider string
 		var lastDuration time.Duration
 		totalAttempts := 0
+		busySkipped := 0
+		attemptedUpstream := false
 
 		for _, level := range levels {
 			providersInLevel := levelGroups[level]
 			fmt.Printf("[INFO] === 尝试 Level %d（%d 个 provider）===\n", level, len(providersInLevel))
 
 			for i, provider := range providersInLevel {
-				totalAttempts++
-
 				// 获取实际应该使用的模型名
 				effectiveModel := provider.GetEffectiveModel(requestedModel)
 
@@ -471,9 +634,22 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 				// 尝试发送请求
 				// 获取有效的端点（用户配置优先）
 				effectiveEndpoint := provider.GetEffectiveEndpoint(endpoint)
+				release, acquired := prs.concurrencyManager.TryAcquire(
+					providerConcurrencyKey(kind, provider.Name),
+					provider.MaxConcurrentRequests,
+				)
+				if !acquired {
+					busySkipped++
+					fmt.Printf("[INFO]   ⏭️ Provider %s 达到并发上限(%d)，跳过\n", provider.Name, provider.MaxConcurrentRequests)
+					continue
+				}
+
+				totalAttempts++
+				attemptedUpstream = true
 				startTime := time.Now()
-				ok, err := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
+				ok, err, responseWritten := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
 				duration := time.Since(startTime)
+				release()
 
 				if ok {
 					fmt.Printf("[INFO]   ✓ Level %d 成功: %s | 耗时: %.2fs\n", level, provider.Name, duration.Seconds())
@@ -508,6 +684,11 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 					fmt.Printf("[ERROR] 记录失败到黑名单失败: %v\n", err)
 				}
 
+				if responseWritten {
+					fmt.Printf("[WARN] 响应已写入客户端，停止降级\n")
+					return
+				}
+
 				// 发送切换通知：检查是否有下一个可用的 provider
 				if prs.notificationService != nil {
 					nextProvider := ""
@@ -538,6 +719,15 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 		}
 
 		// 所有 provider 都失败，返回 502
+		if !attemptedUpstream && busySkipped > 0 {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":          "all providers are busy",
+				"mode":           "concurrency_limit",
+				"busy_providers": busySkipped,
+			})
+			return
+		}
+
 		errorMsg := "未知错误"
 		if lastError != nil {
 			errorMsg = lastError.Error()
@@ -564,7 +754,7 @@ func (prs *ProviderRelayService) forwardRequest(
 	bodyBytes []byte,
 	isStream bool,
 	model string,
-) (bool, error) {
+) (bool, error, bool) {
 	targetURL := joinURL(provider.APIURL, endpoint)
 	headers := cloneMap(clientHeaders)
 
@@ -597,9 +787,13 @@ func (prs *ProviderRelayService) forwardRequest(
 		Model:    model,
 		IsStream: isStream,
 	}
+	skipPersist := false
 	start := time.Now()
 	defer func() {
 		requestLog.DurationSec = time.Since(start).Seconds()
+		if skipPersist {
+			return
+		}
 
 		// 【修复】判空保护：避免队列未初始化时 panic
 		if GlobalDBQueueLogs == nil {
@@ -656,14 +850,19 @@ func (prs *ProviderRelayService) forwardRequest(
 	if err != nil {
 		// resp 存在但 err != nil：可能是客户端中断，不计入失败
 		if resp != nil && requestLog.HttpCode == 0 {
-			fmt.Printf("[INFO] Provider %s 响应存在但状态码为0，判定为客户端中断\n", provider.Name)
-			return false, fmt.Errorf("%w: %v", errClientAbort, err)
+			if isLikelyClientAbortErr(c, err) {
+				skipPersist = true
+				fmt.Printf("[INFO] Provider %s 响应存在且状态码为0，判定为客户端中断\n", provider.Name)
+				return false, fmt.Errorf("%w: %v", errClientAbort, err), false
+			}
+			requestLog.HttpCode = http.StatusBadGateway
+			return false, fmt.Errorf("upstream transport error (status=0): %w", err), false
 		}
-		return false, err
+		return false, err, false
 	}
 
 	if resp == nil {
-		return false, fmt.Errorf("empty response")
+		return false, fmt.Errorf("empty response"), false
 	}
 
 	status := requestLog.HttpCode
@@ -671,32 +870,56 @@ func (prs *ProviderRelayService) forwardRequest(
 	if resp.Error() != nil {
 		// resp 存在、有错误、但状态码为 0：客户端中断，不计入失败
 		if status == 0 {
-			fmt.Printf("[INFO] Provider %s 响应错误但状态码为0，判定为客户端中断\n", provider.Name)
-			return false, fmt.Errorf("%w: %v", errClientAbort, resp.Error())
+			if isLikelyClientAbortErr(c, resp.Error()) {
+				skipPersist = true
+				fmt.Printf("[INFO] Provider %s 响应错误且状态码为0，判定为客户端中断\n", provider.Name)
+				return false, fmt.Errorf("%w: %v", errClientAbort, resp.Error()), false
+			}
+			requestLog.HttpCode = http.StatusBadGateway
+			return false, fmt.Errorf("upstream response error (status=0): %w", resp.Error()), false
 		}
-		return false, resp.Error()
+		return false, resp.Error(), false
 	}
 
-	// 状态码为 0 且无错误：当作成功处理
+	// 状态码为 0 且无错误：不再当作成功，优先识别客户端中断，否则按上游异常处理
 	if status == 0 {
-		fmt.Printf("[WARN] Provider %s 返回状态码 0，但无错误，当作成功处理\n", provider.Name)
-		_, copyErr := resp.ToHttpResponseWriter(c.Writer, ReqeustLogHook(c, kind, requestLog))
-		if copyErr != nil {
-			fmt.Printf("[WARN] 复制响应到客户端失败（不影响provider成功判定）: %v\n", copyErr)
+		if c.Request != nil && c.Request.Context().Err() != nil {
+			skipPersist = true
+			fmt.Printf("[INFO] Provider %s 返回状态码0且请求上下文已取消，判定为客户端中断\n", provider.Name)
+			return false, fmt.Errorf("%w: %v", errClientAbort, c.Request.Context().Err()), false
 		}
-		return true, nil
+		requestLog.HttpCode = http.StatusBadGateway
+		return false, fmt.Errorf("upstream status 0"), false
 	}
 
 	if status >= http.StatusOK && status < http.StatusMultipleChoices {
+		// 非流式：先读完 body 解析 token，再决定是否写回客户端（允许 token=0 时降级到下一个 provider）
+		if !isStream {
+			body := resp.Bytes()
+			parseNonStreamTokenUsage(kind, body, requestLog)
+			if requestLog.OutputTokens == 0 {
+				return false, errTokenZero, false
+			}
+			_, copyErr := resp.ToHttpResponseWriter(c.Writer)
+			if copyErr != nil {
+				fmt.Printf("[WARN] 复制响应到客户端失败（不影响provider成功判定）: %v\n", copyErr)
+			}
+			return true, nil, true
+		}
+
+		// 流式：先转发，再根据解析出的 token 判断是否失败（但响应已写入，不能降级）
 		_, copyErr := resp.ToHttpResponseWriter(c.Writer, ReqeustLogHook(c, kind, requestLog))
 		if copyErr != nil {
 			fmt.Printf("[WARN] 复制响应到客户端失败（不影响provider成功判定）: %v\n", copyErr)
+			return true, nil, true
 		}
-		// 只要provider返回了2xx状态码，就算成功（复制失败是客户端问题，不是provider问题）
-		return true, nil
+		if requestLog.OutputTokens == 0 {
+			return false, errTokenZero, true
+		}
+		return true, nil, true
 	}
 
-	return false, fmt.Errorf("upstream status %d", status)
+	return false, fmt.Errorf("upstream status %d", status), false
 }
 
 func cloneHeaders(header http.Header) map[string]string {
@@ -731,6 +954,15 @@ func joinURL(base string, endpoint string) string {
 	base = strings.TrimSuffix(base, "/")
 	endpoint = "/" + strings.TrimPrefix(endpoint, "/")
 	return base + endpoint
+}
+
+func providerConcurrencyKey(kind, providerName string) string {
+	kind = strings.TrimSpace(kind)
+	providerName = strings.TrimSpace(providerName)
+	if kind == "" {
+		kind = "unknown"
+	}
+	return kind + "::" + providerName
 }
 
 func boolToInt(b bool) int {
@@ -821,6 +1053,63 @@ func parseEventPayload(payload string, parser func(string, *ReqeustLog), usage *
 		if strings.HasPrefix(line, "data:") {
 			parser(strings.TrimPrefix(line, "data: "), usage)
 		}
+	}
+}
+
+// parseNonStreamTokenUsage parses token usage from a non-SSE JSON response body.
+// It is intentionally strict: missing/zero output_tokens will be treated as failure by the caller.
+func parseNonStreamTokenUsage(kind string, body []byte, usage *ReqeustLog) {
+	if usage == nil || len(body) == 0 {
+		return
+	}
+
+	switch kind {
+	case "codex":
+		parseCodexNonStreamUsage(body, usage)
+	default:
+		parseClaudeNonStreamUsage(body, usage)
+	}
+}
+
+func parseClaudeNonStreamUsage(body []byte, usage *ReqeustLog) {
+	if usage == nil || len(body) == 0 {
+		return
+	}
+
+	if gjson.GetBytes(body, "usage").Exists() {
+		usage.InputTokens += int(gjson.GetBytes(body, "usage.input_tokens").Int())
+		usage.OutputTokens += int(gjson.GetBytes(body, "usage.output_tokens").Int())
+		usage.CacheCreateTokens += int(gjson.GetBytes(body, "usage.cache_creation_input_tokens").Int())
+		usage.CacheReadTokens += int(gjson.GetBytes(body, "usage.cache_read_input_tokens").Int())
+		return
+	}
+
+	if gjson.GetBytes(body, "message.usage").Exists() {
+		usage.InputTokens += int(gjson.GetBytes(body, "message.usage.input_tokens").Int())
+		usage.OutputTokens += int(gjson.GetBytes(body, "message.usage.output_tokens").Int())
+		usage.CacheCreateTokens += int(gjson.GetBytes(body, "message.usage.cache_creation_input_tokens").Int())
+		usage.CacheReadTokens += int(gjson.GetBytes(body, "message.usage.cache_read_input_tokens").Int())
+	}
+}
+
+func parseCodexNonStreamUsage(body []byte, usage *ReqeustLog) {
+	if usage == nil || len(body) == 0 {
+		return
+	}
+
+	if gjson.GetBytes(body, "usage").Exists() {
+		usage.InputTokens += int(gjson.GetBytes(body, "usage.input_tokens").Int())
+		usage.OutputTokens += int(gjson.GetBytes(body, "usage.output_tokens").Int())
+		usage.CacheReadTokens += int(gjson.GetBytes(body, "usage.input_tokens_details.cached_tokens").Int())
+		usage.ReasoningTokens += int(gjson.GetBytes(body, "usage.output_tokens_details.reasoning_tokens").Int())
+		return
+	}
+
+	if gjson.GetBytes(body, "response.usage").Exists() {
+		usage.InputTokens += int(gjson.GetBytes(body, "response.usage.input_tokens").Int())
+		usage.OutputTokens += int(gjson.GetBytes(body, "response.usage.output_tokens").Int())
+		usage.CacheReadTokens += int(gjson.GetBytes(body, "response.usage.input_tokens_details.cached_tokens").Int())
+		usage.ReasoningTokens += int(gjson.GetBytes(body, "response.usage.output_tokens_details.reasoning_tokens").Int())
 	}
 }
 
@@ -1142,6 +1431,8 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 			var lastError string
 			var lastProvider string
 			totalAttempts := 0
+			busySkipped := 0
+			attemptedUpstream := false
 
 			// 遍历所有 Level 和 Provider
 			for _, level := range sortedLevels {
@@ -1161,8 +1452,6 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 
 					// 同 Provider 内重试循环
 					for retryCount := 0; retryCount < maxRetryPerProvider; retryCount++ {
-						totalAttempts++
-
 						// 再次检查是否已被拉黑（重试过程中可能被拉黑）
 						if blacklisted, _ := prs.blacklistService.IsBlacklisted("gemini", provider.Name); blacklisted {
 							fmt.Printf("[Gemini] 🚫 Provider %s 已被拉黑，切换到下一个\n", provider.Name)
@@ -1172,7 +1461,20 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 						fmt.Printf("[Gemini] [拉黑模式] Provider: %s (Level %d) | 重试 %d/%d\n",
 							provider.Name, level, retryCount+1, maxRetryPerProvider)
 
+						release, acquired := prs.concurrencyManager.TryAcquire(
+							providerConcurrencyKey("gemini", provider.Name),
+							provider.MaxConcurrentRequests,
+						)
+						if !acquired {
+							busySkipped++
+							fmt.Printf("[Gemini] ⏭️ Provider %s 达到并发上限(%d)，跳过到下一个\n", provider.Name, provider.MaxConcurrentRequests)
+							break
+						}
+
+						totalAttempts++
+						attemptedUpstream = true
 						ok, errMsg, responseWritten := prs.forwardGeminiRequest(c, &provider, endpoint, bodyBytes, isStream, requestLog)
+						release()
 						if ok {
 							fmt.Printf("[Gemini] ✓ 成功: %s | 重试 %d 次\n", provider.Name, retryCount+1)
 							_ = prs.blacklistService.RecordSuccess("gemini", provider.Name)
@@ -1215,6 +1517,16 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 			// 所有 Provider 都失败或被拉黑
 			fmt.Printf("[Gemini] 💥 拉黑模式：所有 Provider 都失败或被拉黑（共尝试 %d 次）\n", totalAttempts)
 
+			if !attemptedUpstream && busySkipped > 0 {
+				requestLog.HttpCode = http.StatusTooManyRequests
+				c.JSON(http.StatusTooManyRequests, gin.H{
+					"error":          "all gemini providers are busy",
+					"mode":           "concurrency_limit",
+					"busy_providers": busySkipped,
+				})
+				return
+			}
+
 			if requestLog.HttpCode == 0 {
 				requestLog.HttpCode = http.StatusBadGateway
 			}
@@ -1230,6 +1542,8 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 
 		// 【降级模式】：按 Level 顺序尝试所有 provider
 		var lastError string
+		busySkipped := 0
+		attemptedUpstream := false
 		for _, level := range sortedLevels {
 			providersInLevel := levelGroups[level]
 			fmt.Printf("[Gemini] === 尝试 Level %d（%d 个 provider）===\n", level, len(providersInLevel))
@@ -1241,7 +1555,19 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 				requestLog.Provider = provider.Name
 				requestLog.Model = provider.Model
 
+				release, acquired := prs.concurrencyManager.TryAcquire(
+					providerConcurrencyKey("gemini", provider.Name),
+					provider.MaxConcurrentRequests,
+				)
+				if !acquired {
+					busySkipped++
+					fmt.Printf("[Gemini]   ⏭️ Provider %s 达到并发上限(%d)，跳过\n", provider.Name, provider.MaxConcurrentRequests)
+					continue
+				}
+
+				attemptedUpstream = true
 				ok, errMsg, responseWritten := prs.forwardGeminiRequest(c, &provider, endpoint, bodyBytes, isStream, requestLog)
+				release()
 				if ok {
 					_ = prs.blacklistService.RecordSuccess("gemini", provider.Name)
 					// 记录最后使用的供应商
@@ -1266,6 +1592,16 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 		}
 
 		// 所有 Level 都失败
+		if !attemptedUpstream && busySkipped > 0 {
+			requestLog.HttpCode = http.StatusTooManyRequests
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":          "all gemini providers are busy",
+				"mode":           "concurrency_limit",
+				"busy_providers": busySkipped,
+			})
+			return
+		}
+
 		if requestLog.HttpCode == 0 {
 			requestLog.HttpCode = http.StatusBadGateway
 		}
@@ -1323,6 +1659,11 @@ func (prs *ProviderRelayService) forwardGeminiRequest(
 	requestLog.Provider = provider.Name
 	// 【修复】每次尝试开始前重置 HttpCode，避免重试时沿用上一次的状态码
 	requestLog.HttpCode = 0
+	requestLog.InputTokens = 0
+	requestLog.OutputTokens = 0
+	requestLog.CacheCreateTokens = 0
+	requestLog.CacheReadTokens = 0
+	requestLog.ReasoningTokens = 0
 	// 优先从 endpoint 提取模型名（如 gemini-2.5-pro），否则回退到 provider.Model
 	if extractedModel := extractGeminiModelFromEndpoint(endpoint); extractedModel != "" {
 		requestLog.Model = extractedModel
@@ -1388,6 +1729,9 @@ func (prs *ProviderRelayService) forwardGeminiRequest(
 			// 流式传输中断：已写入部分响应，客户端会收到不完整数据
 			return false, fmt.Sprintf("流式传输中断: %v", copyErr), true
 		}
+		if requestLog.OutputTokens == 0 {
+			return false, errTokenZero.Error(), true
+		}
 	} else {
 		// 非流式模式：先读完 body 再写 header（允许读取失败时重试）
 		body, readErr := io.ReadAll(resp.Body)
@@ -1398,6 +1742,9 @@ func (prs *ProviderRelayService) forwardGeminiRequest(
 		}
 		// 解析 Gemini 用量数据
 		parseGeminiUsageMetadata(body, requestLog)
+		if requestLog.OutputTokens == 0 {
+			return false, errTokenZero.Error(), false
+		}
 		// 读取成功后再写 header 和 body
 		for key, values := range resp.Header {
 			for _, value := range values {
@@ -1552,6 +1899,8 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 			var lastError error
 			var lastProvider string
 			totalAttempts := 0
+			busySkipped := 0
+			attemptedUpstream := false
 
 			// 遍历所有 Level 和 Provider
 			for _, level := range levels {
@@ -1583,8 +1932,6 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 
 					// 同 Provider 内重试循环
 					for retryCount := 0; retryCount < maxRetryPerProvider; retryCount++ {
-						totalAttempts++
-
 						// 再次检查是否已被拉黑（重试过程中可能被拉黑）
 						if blacklisted, _ := prs.blacklistService.IsBlacklisted(kind, provider.Name); blacklisted {
 							fmt.Printf("[CustomCLI][INFO] 🚫 Provider %s 已被拉黑，切换到下一个\n", provider.Name)
@@ -1594,9 +1941,22 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 						fmt.Printf("[CustomCLI][INFO] [拉黑模式] Provider: %s (Level %d) | 重试 %d/%d | Model: %s\n",
 							provider.Name, level, retryCount+1, maxRetryPerProvider, effectiveModel)
 
+						release, acquired := prs.concurrencyManager.TryAcquire(
+							providerConcurrencyKey(kind, provider.Name),
+							provider.MaxConcurrentRequests,
+						)
+						if !acquired {
+							busySkipped++
+							fmt.Printf("[CustomCLI][INFO] ⏭️ Provider %s 达到并发上限(%d)，跳过到下一个\n", provider.Name, provider.MaxConcurrentRequests)
+							break
+						}
+
+						totalAttempts++
+						attemptedUpstream = true
 						startTime := time.Now()
-						ok, err := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
+						ok, err, responseWritten := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
 						duration := time.Since(startTime)
+						release()
 
 						if ok {
 							fmt.Printf("[CustomCLI][INFO] ✓ 成功: %s | 重试 %d 次 | 耗时: %.2fs\n",
@@ -1630,6 +1990,11 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 							fmt.Printf("[CustomCLI][ERROR] 记录失败到黑名单失败: %v\n", err)
 						}
 
+						if responseWritten {
+							fmt.Printf("[CustomCLI][WARN] 响应已写入客户端，停止重试与降级\n")
+							return
+						}
+
 						// 检查是否刚被拉黑
 						if blacklisted, _ := prs.blacklistService.IsBlacklisted(kind, provider.Name); blacklisted {
 							fmt.Printf("[CustomCLI][INFO] 🚫 Provider %s 达到失败阈值，已被拉黑，切换到下一个\n", provider.Name)
@@ -1646,6 +2011,15 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 			}
 
 			// 所有 Provider 都失败或被拉黑
+			if !attemptedUpstream && busySkipped > 0 {
+				c.JSON(http.StatusTooManyRequests, gin.H{
+					"error":          "all providers are busy",
+					"mode":           "concurrency_limit",
+					"busy_providers": busySkipped,
+				})
+				return
+			}
+
 			fmt.Printf("[CustomCLI][ERROR] 💥 拉黑模式：所有 Provider 都失败或被拉黑（共尝试 %d 次）\n", totalAttempts)
 
 			errorMsg := "未知错误"
@@ -1669,14 +2043,14 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 		var lastProvider string
 		var lastDuration time.Duration
 		totalAttempts := 0
+		busySkipped := 0
+		attemptedUpstream := false
 
 		for _, level := range levels {
 			providersInLevel := levelGroups[level]
 			fmt.Printf("[CustomCLI][INFO] === 尝试 Level %d（%d 个 provider）===\n", level, len(providersInLevel))
 
 			for i, provider := range providersInLevel {
-				totalAttempts++
-
 				effectiveModel := provider.GetEffectiveModel(requestedModel)
 				currentBodyBytes := bodyBytes
 				if effectiveModel != requestedModel && requestedModel != "" {
@@ -1693,9 +2067,22 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 				// 获取有效的端点（用户配置优先）
 				effectiveEndpoint := provider.GetEffectiveEndpoint(endpoint)
 
+				release, acquired := prs.concurrencyManager.TryAcquire(
+					providerConcurrencyKey(kind, provider.Name),
+					provider.MaxConcurrentRequests,
+				)
+				if !acquired {
+					busySkipped++
+					fmt.Printf("[CustomCLI][INFO]   ⏭️ Provider %s 达到并发上限(%d)，跳过\n", provider.Name, provider.MaxConcurrentRequests)
+					continue
+				}
+
+				totalAttempts++
+				attemptedUpstream = true
 				startTime := time.Now()
-				ok, err := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
+				ok, err, responseWritten := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
 				duration := time.Since(startTime)
+				release()
 
 				if ok {
 					fmt.Printf("[CustomCLI][INFO]   ✓ Level %d 成功: %s | 耗时: %.2fs\n", level, provider.Name, duration.Seconds())
@@ -1721,6 +2108,11 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 					fmt.Printf("[CustomCLI][INFO] 客户端中断，跳过失败计数: %s\n", provider.Name)
 				} else if err := prs.blacklistService.RecordFailure(kind, provider.Name); err != nil {
 					fmt.Printf("[CustomCLI][ERROR] 记录失败到黑名单失败: %v\n", err)
+				}
+
+				if responseWritten {
+					fmt.Printf("[CustomCLI][WARN] 响应已写入客户端，停止降级\n")
+					return
 				}
 
 				// 发送切换通知
@@ -1751,6 +2143,15 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 		}
 
 		// 所有 provider 都失败
+		if !attemptedUpstream && busySkipped > 0 {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":          "all providers are busy",
+				"mode":           "concurrency_limit",
+				"busy_providers": busySkipped,
+			})
+			return
+		}
+
 		errorMsg := "未知错误"
 		if lastError != nil {
 			errorMsg = lastError.Error()

@@ -1,3 +1,6 @@
+//go:build ignore
+// +build ignore
+
 // 黑名单时区问题诊断脚本
 package main
 

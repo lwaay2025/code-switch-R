@@ -328,6 +328,7 @@
           "icon": "图标",
           "enabled": "启用状态",
           "level": "优先级分组",
+          "maxConcurrentRequests": "最大并发请求数",
           "availabilityMonitor": "可用性监控",
           "connectivityAutoBlacklist": "失败自动拉黑",
           "availabilityTestModel": "测试模型（可选）",
@@ -345,6 +346,7 @@
           "apiEndpoint": "留空使用默认，如 /v1/chat/completions",
           "officialSite": "https://vendor.com",
           "icon": "例如：aicoding、kimi",
+          "maxConcurrentRequests": "0 表示不限制",
           "availabilityTestModel": "留空则使用平台默认模型",
           "availabilityTestEndpoint": "例如：/v1/messages",
           "connectivityTestModel": "选择或使用默认",
@@ -354,6 +356,7 @@
         },
         "hints": {
           "level": "数字越小优先级越高，Level 1 会被优先尝试，失败后依次尝试 Level 2、Level 3 等",
+          "maxConcurrentRequests": "限制单个供应商同时进行的请求数，0 表示不限制。",
           "apiEndpoint": "覆盖平台默认端点。留空使用默认（claude: /v1/messages, codex: /responses）。GLM 模型请使用 /v1/chat/completions",
           "availabilityMonitor": "启用后会定期进行健康检查，监控此供应商的可用性状态",
           "connectivityAutoBlacklist": "健康检查失败时自动拉黑该供应商",
@@ -460,6 +463,7 @@
         "platform": "平台",
         "allPlatforms": "全部平台",
         "provider": "供应商",
+        "date": "日期",
         "allProviders": "全部供应商",
         "providerPlaceholder": "输入供应商名称",
         "limit": "条数上限"
@@ -478,7 +482,8 @@
         "cache": "缓存命中",
         "cacheHint": "响应中的读取命中数",
         "costHint": "近 24 小时总花费",
-        "todayScope": "今日 · {date}"
+        "todayScope": "日期 · {date}",
+        "dateScope": "日期 · {date}"
       },
       "table": {
         "time": "时间",
@@ -504,8 +509,8 @@
       "nextRefresh": "距离下次刷新 {seconds}s",
       "query": "查询",
       "costDetail": {
-        "title": "今日消费明细",
-        "empty": "今日暂无消费记录"
+        "title": "消费明细",
+        "empty": "所选日期暂无消费记录"
       }
     },
     "general": {
@@ -530,6 +535,9 @@
         "autoStart": "开机自启动",
         "switchNotify": "切换通知",
         "switchNotifyHint": "供应商切换或拉黑时发送系统通知",
+        "logRetention": "日志保留",
+        "logRetentionHint": "启用后将自动清理超过保留天数的请求日志",
+        "logRetentionDays": "保留时长",
         "autoUpdate": "自动更新",
         "lastCheck": "上次检查",
         "currentVersion": "当前版本",
@@ -549,6 +557,7 @@
         "enableLevelBlacklistHint": "开启后使用分级拉黑机制（L1-L5），关闭则使用固定时长",
         "times": "次",
         "minutes": "分钟",
+        "days": "天",
         "save": "保存",
         "saving": "保存中...",
         "useProxy": "使用代理服务器",
@@ -775,6 +784,7 @@
         "baseUrl": "API 地址",
         "apiKey": "API 密钥",
         "model": "默认模型",
+        "maxConcurrentRequests": "最大并发请求数",
         "cancel": "取消",
         "save": "保存",
         "delete": "删除"

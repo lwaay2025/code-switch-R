@@ -46,6 +46,9 @@ type Provider struct {
 	// 使用 omitempty 确保零值不序列化，向后兼容
 	Level int `json:"level,omitempty"`
 
+	// 最大并发请求数（可选）：0 表示不限制
+	MaxConcurrentRequests int `json:"maxConcurrentRequests,omitempty"`
+
 	// ========== 可用性监控字段（新增 v0.5.0） ==========
 
 	// 可用性监控开关 - 在可用性页面配置
@@ -390,17 +393,18 @@ func (ps *ProviderService) DuplicateProvider(kind string, sourceID int64) (*Prov
 
 	// 5. 克隆配置（深拷贝）
 	cloned := &Provider{
-		ID:      newID,
-		Name:    source.Name + " (副本)",
-		APIURL:  source.APIURL,
-		APIKey:  source.APIKey,
-		Site:    source.Site,
-		Icon:    source.Icon,
-		Tint:    source.Tint,
-		Accent:  source.Accent,
-		Enabled: false, // 默认禁用，避免与源供应商冲突
-		Level:   source.Level,
-	APIEndpoint: source.APIEndpoint, // 复制端点配置
+		ID:                    newID,
+		Name:                  source.Name + " (副本)",
+		APIURL:                source.APIURL,
+		APIKey:                source.APIKey,
+		Site:                  source.Site,
+		Icon:                  source.Icon,
+		Tint:                  source.Tint,
+		Accent:                source.Accent,
+		Enabled:               false, // 默认禁用，避免与源供应商冲突
+		Level:                 source.Level,
+		APIEndpoint:           source.APIEndpoint, // 复制端点配置
+		MaxConcurrentRequests: source.MaxConcurrentRequests,
 		// 可用性监控配置
 		AvailabilityMonitorEnabled: source.AvailabilityMonitorEnabled,
 		ConnectivityAutoBlacklist:  false, // 副本默认关闭自动拉黑

@@ -40,6 +40,8 @@ export class AppSettings {
      * 全局 User-Agent
      */
     "user_agent": string;
+    "log_retention_enabled": boolean;
+    "log_retention_days": number;
 
     /** Creates a new AppSettings instance. */
     constructor($$source: Partial<AppSettings> = {}) {
@@ -72,6 +74,12 @@ export class AppSettings {
         }
         if (!("user_agent" in $$source)) {
             this["user_agent"] = "";
+        }
+        if (!("log_retention_enabled" in $$source)) {
+            this["log_retention_enabled"] = false;
+        }
+        if (!("log_retention_days" in $$source)) {
+            this["log_retention_days"] = 0;
         }
 
         Object.assign(this, $$source);
@@ -1242,6 +1250,11 @@ export class GeminiProvider {
     "level"?: number;
 
     /**
+     * 最大并发请求数（0=不限制）
+     */
+    "maxConcurrentRequests"?: number;
+
+    /**
      * .env 配置
      */
     "envConfig"?: { [_: string]: string };
@@ -1270,14 +1283,14 @@ export class GeminiProvider {
      * Creates a new GeminiProvider instance from a string or object.
      */
     static createFrom($$source: any = {}): GeminiProvider {
-        const $$createField12_0 = $$createType4;
-        const $$createField13_0 = $$createType5;
+        const $$createField13_0 = $$createType4;
+        const $$createField14_0 = $$createType5;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("envConfig" in $$parsedSource) {
-            $$parsedSource["envConfig"] = $$createField12_0($$parsedSource["envConfig"]);
+            $$parsedSource["envConfig"] = $$createField13_0($$parsedSource["envConfig"]);
         }
         if ("settingsConfig" in $$parsedSource) {
-            $$parsedSource["settingsConfig"] = $$createField13_0($$parsedSource["settingsConfig"]);
+            $$parsedSource["settingsConfig"] = $$createField14_0($$parsedSource["settingsConfig"]);
         }
         return new GeminiProvider($$parsedSource as Partial<GeminiProvider>);
     }
@@ -1965,6 +1978,11 @@ export class Provider {
     "level"?: number;
 
     /**
+     * 最大并发请求数（可选）：0 表示不限制
+     */
+    "maxConcurrentRequests"?: number;
+
+    /**
      * 可用性监控开关 - 在可用性页面配置
      * 启用后才会执行后台健康检查
      */
@@ -2042,7 +2060,7 @@ export class Provider {
     static createFrom($$source: any = {}): Provider {
         const $$createField10_0 = $$createType20;
         const $$createField11_0 = $$createType4;
-        const $$createField15_0 = $$createType22;
+        const $$createField16_0 = $$createType22;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("supportedModels" in $$parsedSource) {
             $$parsedSource["supportedModels"] = $$createField10_0($$parsedSource["supportedModels"]);
@@ -2051,7 +2069,7 @@ export class Provider {
             $$parsedSource["modelMapping"] = $$createField11_0($$parsedSource["modelMapping"]);
         }
         if ("availabilityConfig" in $$parsedSource) {
-            $$parsedSource["availabilityConfig"] = $$createField15_0($$parsedSource["availabilityConfig"]);
+            $$parsedSource["availabilityConfig"] = $$createField16_0($$parsedSource["availabilityConfig"]);
         }
         return new Provider($$parsedSource as Partial<Provider>);
     }

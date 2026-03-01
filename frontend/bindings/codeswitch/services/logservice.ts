@@ -21,8 +21,20 @@ export function ListProviders(platform: string): $CancellablePromise<string[]> {
     });
 }
 
+export function ListProvidersOnDate(platform: string, date: string): $CancellablePromise<string[]> {
+    return $Call.ByID(3732269833, platform, date).then(($result: any) => {
+        return $$createType2($result);
+    });
+}
+
 export function ListRequestLogs(platform: string, provider: string, limit: number): $CancellablePromise<$models.ReqeustLog[]> {
     return $Call.ByID(1199056012, platform, provider, limit).then(($result: any) => {
+        return $$createType4($result);
+    });
+}
+
+export function ListRequestLogsOnDate(platform: string, provider: string, date: string, limit: number): $CancellablePromise<$models.ReqeustLog[]> {
+    return $Call.ByID(1718346505, platform, provider, date, limit).then(($result: any) => {
         return $$createType4($result);
     });
 }
@@ -33,10 +45,34 @@ export function ProviderDailyStats(platform: string): $CancellablePromise<$model
     });
 }
 
+export function ProviderDailyStatsOnDate(platform: string, date: string): $CancellablePromise<$models.ProviderDailyStat[]> {
+    return $Call.ByID(4059554018, platform, date).then(($result: any) => {
+        return $$createType6($result);
+    });
+}
+
+export function RunRetentionCleanup(): $CancellablePromise<number> {
+    return $Call.ByID(523191977);
+}
+
+export function Start(): $CancellablePromise<void> {
+    return $Call.ByID(567661822);
+}
+
+export function StatsOnDate(platform: string, date: string): $CancellablePromise<$models.LogStats> {
+    return $Call.ByID(95318484, platform, date).then(($result: any) => {
+        return $$createType7($result);
+    });
+}
+
 export function StatsSince(platform: string): $CancellablePromise<$models.LogStats> {
     return $Call.ByID(2831143405, platform).then(($result: any) => {
         return $$createType7($result);
     });
+}
+
+export function Stop(): $CancellablePromise<void> {
+    return $Call.ByID(2614024838);
 }
 
 // Private type creation functions

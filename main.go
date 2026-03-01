@@ -123,7 +123,7 @@ func main() {
 	claudeSettings := services.NewClaudeSettingsService(providerRelay.Addr())
 	codexSettings := services.NewCodexSettingsService(providerRelay.Addr())
 	cliConfigService := services.NewCliConfigService(providerRelay.Addr())
-	logService := services.NewLogService()
+	logService := services.NewLogService(appSettings)
 	updateService := services.NewUpdateService(AppVersion)
 	mcpService := services.NewMCPService()
 	skillService := services.NewSkillService()

@@ -228,6 +228,18 @@
           <BaseInput v-model="modalState.form.model" type="text" :disabled="saving" placeholder="gemini-2.5-pro-preview" />
         </label>
 
+        <label class="form-field">
+          <span>{{ t('components.gemini.form.maxConcurrentRequests') }}</span>
+          <BaseInput
+            v-model="modalState.form.maxConcurrentRequests"
+            type="number"
+            :disabled="saving"
+            min="0"
+            step="1"
+            placeholder="0"
+          />
+        </label>
+
         <footer class="form-actions">
           <BaseButton variant="outline" type="button" @click="closeModal">
             {{ t('components.gemini.form.cancel') }}
@@ -310,6 +322,7 @@ const modalState = reactive({
     baseUrl: '',
     apiKey: '',
     model: '',
+    maxConcurrentRequests: '0',
   },
 })
 
@@ -381,6 +394,7 @@ const openPresetModal = (preset: BindingGeminiPreset) => {
   modalState.form.baseUrl = preset.baseUrl ?? ''
   modalState.form.apiKey = ''
   modalState.form.model = preset.model ?? 'gemini-2.5-pro-preview'
+  modalState.form.maxConcurrentRequests = '0'
 }
 
 const openCreateModal = () => {
@@ -391,6 +405,7 @@ const openCreateModal = () => {
   modalState.form.baseUrl = ''
   modalState.form.apiKey = ''
   modalState.form.model = 'gemini-2.5-pro-preview'
+  modalState.form.maxConcurrentRequests = '0'
 }
 
 const openEditModal = (provider: BindingGeminiProvider) => {
@@ -403,6 +418,7 @@ const openEditModal = (provider: BindingGeminiProvider) => {
   modalState.form.baseUrl = provider.baseUrl ?? ''
   modalState.form.apiKey = provider.apiKey ?? ''
   modalState.form.model = provider.model ?? ''
+  modalState.form.maxConcurrentRequests = String(provider.maxConcurrentRequests ?? 0)
 }
 
 const closeModal = () => {
@@ -410,6 +426,12 @@ const closeModal = () => {
   modalState.editing = false
   modalState.editingId = ''
   modalState.originalProvider = null
+}
+
+const normalizeMaxConcurrentRequests = (value: string | number | undefined) => {
+  const num = Number(value)
+  if (!Number.isFinite(num) || num <= 0) return 0
+  return Math.floor(num)
 }
 
 const submitModal = async () => {
@@ -436,6 +458,7 @@ const submitModal = async () => {
         baseUrl: modalState.form.baseUrl,
         apiKey: modalState.form.apiKey,
         model: modalState.form.model,
+        maxConcurrentRequests: normalizeMaxConcurrentRequests(modalState.form.maxConcurrentRequests),
         enabled: original.enabled, // 保持启用状态不变
         envConfig: {
           ...(original.envConfig ?? {}),
@@ -452,6 +475,7 @@ const submitModal = async () => {
         baseUrl: modalState.form.baseUrl,
         apiKey: modalState.form.apiKey,
         model: modalState.form.model,
+        maxConcurrentRequests: normalizeMaxConcurrentRequests(modalState.form.maxConcurrentRequests),
         enabled: false,
         envConfig: {
           GOOGLE_GEMINI_BASE_URL: modalState.form.baseUrl,

@@ -81,10 +81,14 @@ func TestHealthCheck_AcceptHeader(t *testing.T) {
 	var hasAcceptHeader bool
 	var acceptValue string
 	var userAgent string
+	var hasAnthropicVersion bool
+	var anthropicVersion string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		acceptValue = r.Header.Get("Accept")
 		hasAcceptHeader = acceptValue != ""
 		userAgent = r.Header.Get("User-Agent")
+		anthropicVersion = r.Header.Get("anthropic-version")
+		hasAnthropicVersion = anthropicVersion != ""
 
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"result": "ok"}`))
@@ -107,7 +111,7 @@ func TestHealthCheck_AcceptHeader(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_ = hcs.checkProvider(ctx, provider, "codex")
+	_ = hcs.checkProvider(ctx, provider, "claude")
 
 	// 验证 Accept header 存在
 	if !hasAcceptHeader {
@@ -123,6 +127,14 @@ func TestHealthCheck_AcceptHeader(t *testing.T) {
 	// 验证 User-Agent header
 	if userAgent == "" {
 		t.Errorf("User-Agent header missing")
+	}
+
+	// 验证 Claude 平台 anthropic-version
+	if !hasAnthropicVersion {
+		t.Errorf("anthropic-version header missing for claude health check")
+	}
+	if anthropicVersion != "2023-06-01" {
+		t.Errorf("anthropic-version header incorrect: expected 2023-06-01, got %s", anthropicVersion)
 	}
 }
 
@@ -348,11 +360,19 @@ func TestHealthCheck_RequestBodyStructure(t *testing.T) {
 			}
 
 			if platform == "claude" {
-				requiredFields := []string{"model", "max_tokens", "messages"}
+				requiredFields := []string{"model", "max_tokens", "messages", "stream"}
 				for _, field := range requiredFields {
 					if _, ok := reqData[field]; !ok {
 						t.Errorf("Required field %s is missing", field)
 					}
+				}
+
+				stream, ok := reqData["stream"].(bool)
+				if !ok {
+					t.Errorf("stream field should be bool, got %T", reqData["stream"])
+				}
+				if stream {
+					t.Error("stream should be false for health check")
 				}
 
 				messages, ok := reqData["messages"].([]interface{})
@@ -362,6 +382,37 @@ func TestHealthCheck_RequestBodyStructure(t *testing.T) {
 				}
 				if len(messages) == 0 {
 					t.Error("messages array is empty")
+					return
+				}
+
+				firstMsg, ok := messages[0].(map[string]interface{})
+				if !ok {
+					t.Errorf("messages first item should be object, got %T", messages[0])
+					return
+				}
+				if role, _ := firstMsg["role"].(string); strings.TrimSpace(role) == "" {
+					t.Errorf("messages first item missing role: %v", firstMsg)
+				}
+
+				contentArray, ok := firstMsg["content"].([]interface{})
+				if !ok {
+					t.Errorf("claude messages content should be array, got %T", firstMsg["content"])
+					return
+				}
+				if len(contentArray) == 0 {
+					t.Error("claude messages content array is empty")
+					return
+				}
+				firstContent, ok := contentArray[0].(map[string]interface{})
+				if !ok {
+					t.Errorf("claude content first item should be object, got %T", contentArray[0])
+					return
+				}
+				if typ, _ := firstContent["type"].(string); typ != "text" {
+					t.Errorf("claude content type should be text, got %v", firstContent["type"])
+				}
+				if text, _ := firstContent["text"].(string); strings.TrimSpace(text) == "" {
+					t.Errorf("claude content text is empty: %v", firstContent)
 				}
 			}
 
@@ -396,6 +447,77 @@ func TestHealthCheck_RequestBodyStructure(t *testing.T) {
 		})
 	}
 }
+
+// TestHealthCheck_CodexFallbackToStringInput 测试 Codex 在 400 时回退到 string input
+func TestHealthCheck_CodexFallbackToStringInput(t *testing.T) {
+	var callCount int
+	var firstInputType string
+	var secondInputType string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("Failed to read request body: %v", err)
+		}
+		defer r.Body.Close()
+
+		var reqData map[string]interface{}
+		if err := json.Unmarshal(body, &reqData); err != nil {
+			t.Fatalf("Failed to parse request JSON: %v", err)
+		}
+
+		switch reqData["input"].(type) {
+		case []interface{}:
+			if callCount == 1 {
+				firstInputType = "array"
+			}
+		case string:
+			if callCount == 2 {
+				secondInputType = "string"
+			}
+		}
+
+		if callCount == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error": "invalid input format"}`))
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"result": "ok"}`))
+	}))
+	defer server.Close()
+
+	provider := Provider{
+		ID:      1,
+		Name:    "test-provider",
+		APIURL:  server.URL,
+		APIKey:  "test-key",
+		Enabled: true,
+	}
+
+	hcs := &HealthCheckService{}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result := hcs.checkProvider(ctx, provider, "codex")
+
+	if result.Status != HealthStatusOperational {
+		t.Errorf("Expected status %s, got %s (error: %s)", HealthStatusOperational, result.Status, result.ErrorMessage)
+	}
+	if callCount != 2 {
+		t.Errorf("Expected 2 requests (default + fallback), got %d", callCount)
+	}
+	if firstInputType != "array" {
+		t.Errorf("Expected first request input type array, got %s", firstInputType)
+	}
+	if secondInputType != "string" {
+		t.Errorf("Expected second request input type string, got %s", secondInputType)
+	}
+}
+
 
 // BenchmarkCheckProvider 基准测试：健康检查性能
 func BenchmarkCheckProvider(b *testing.B) {

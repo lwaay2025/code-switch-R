@@ -30,16 +30,28 @@ type RequestLogQuery = {
   platform?: LogPlatform | ''
   provider?: string
   limit?: number
+  date?: string
 }
 
 export const fetchRequestLogs = async (query: RequestLogQuery = {}): Promise<RequestLog[]> => {
   const platform = query.platform ?? ''
   const provider = query.provider ?? ''
   const limit = query.limit ?? 100
+  const date = (query.date ?? '').trim()
+  if (date) {
+    return Call.ByName('codeswitch/services.LogService.ListRequestLogsOnDate', platform, provider, date, limit)
+  }
   return Call.ByName('codeswitch/services.LogService.ListRequestLogs', platform, provider, limit)
 }
 
-export const fetchLogProviders = async (platform: LogPlatform | '' = ''): Promise<string[]> => {
+export const fetchLogProviders = async (
+  platform: LogPlatform | '' = '',
+  date: string = '',
+): Promise<string[]> => {
+  const normalizedDate = date.trim()
+  if (normalizedDate) {
+    return Call.ByName('codeswitch/services.LogService.ListProvidersOnDate', platform, normalizedDate)
+  }
   return Call.ByName('codeswitch/services.LogService.ListProviders', platform)
 }
 
@@ -69,7 +81,11 @@ export type LogStats = {
   series: LogStatsSeries[]
 }
 
-export const fetchLogStats = async (platform: LogPlatform | '' = ''): Promise<LogStats> => {
+export const fetchLogStats = async (platform: LogPlatform | '' = '', date: string = ''): Promise<LogStats> => {
+  const normalizedDate = date.trim()
+  if (normalizedDate) {
+    return Call.ByName('codeswitch/services.LogService.StatsOnDate', platform, normalizedDate)
+  }
   return Call.ByName('codeswitch/services.LogService.StatsSince', platform)
 }
 
@@ -89,7 +105,12 @@ export type ProviderDailyStat = {
 
 export const fetchProviderDailyStats = async (
   platform: LogPlatform | '' = '',
+  date: string = '',
 ): Promise<ProviderDailyStat[]> => {
+  const normalizedDate = date.trim()
+  if (normalizedDate) {
+    return Call.ByName('codeswitch/services.LogService.ProviderDailyStatsOnDate', platform, normalizedDate)
+  }
   return Call.ByName('codeswitch/services.LogService.ProviderDailyStats', platform)
 }
 

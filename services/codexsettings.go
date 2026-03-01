@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,15 +46,15 @@ func (css *CodexSettingsService) ProxyStatus() (ClaudeProxyStatus, error) {
 
 	// 向后兼容：同时检查 code-switch-r（新）和 code-switch（旧）两个 key
 	proxyKeys := []string{codexProviderKey, "code-switch"}
-	baseURL := css.baseURL()
 
 	for _, key := range proxyKeys {
 		provider, ok := config.ModelProviders[key]
 		if !ok {
 			continue
 		}
-		if strings.EqualFold(config.ModelProvider, key) && strings.EqualFold(provider.BaseURL, baseURL) {
+		if strings.EqualFold(config.ModelProvider, key) && css.isProxyBaseURL(provider.BaseURL) {
 			status.Enabled = true
+			status.BaseURL = strings.TrimSpace(provider.BaseURL)
 			return status, nil
 		}
 	}
@@ -62,6 +63,14 @@ func (css *CodexSettingsService) ProxyStatus() (ClaudeProxyStatus, error) {
 }
 
 func (css *CodexSettingsService) EnableProxy() error {
+	return css.enableProxyWithProviderName("")
+}
+
+func (css *CodexSettingsService) EnableProxyWithProviderName(providerName string) error {
+	return css.enableProxyWithProviderName(providerName)
+}
+
+func (css *CodexSettingsService) enableProxyWithProviderName(providerName string) error {
 	settingsPath, backupPath, err := css.paths()
 	if err != nil {
 		return err
@@ -140,7 +149,7 @@ func (css *CodexSettingsService) EnableProxy() error {
 		state := &ProxyState{
 			TargetPath:               settingsPath,
 			FileExisted:              fileExisted,
-			InjectedBaseURL:          css.baseURL(),
+			InjectedBaseURL:          css.proxyBaseURLWithProvider(providerName),
 			InjectedAuthToken:        codexTokenValue,
 			AuthFilePath:             authPath,
 			AuthFileExisted:          authFileExisted,
@@ -180,7 +189,7 @@ func (css *CodexSettingsService) EnableProxy() error {
 	modelProviders := ensureTomlTable(raw, "model_providers")
 	provider := ensureProviderTable(modelProviders, codexProviderKey)
 	provider["name"] = codexProviderKey
-	provider["base_url"] = css.baseURL()
+	provider["base_url"] = css.proxyBaseURLWithProvider(providerName)
 	provider["wire_api"] = codexWireAPI
 	provider["requires_openai_auth"] = false
 	modelProviders[codexProviderKey] = provider
@@ -317,19 +326,18 @@ func (css *CodexSettingsService) fallbackCleanupConfig(raw map[string]any) bool 
 
 	// 删除代理专用的 model_providers.code-switch-r
 	// 只有当 base_url 仍指向代理时才删除，避免误删用户自定义的同名 provider
-	proxyURL := css.baseURL()
 	if mpRaw, ok := raw["model_providers"]; ok {
 		if mp, ok := mpRaw.(map[string]any); ok {
 			// 检查 code-switch-r
 			if providerRaw, exists := mp[codexProviderKey]; exists {
-				if css.isProviderPointingToProxy(providerRaw, proxyURL) {
+				if css.isProviderPointingToProxy(providerRaw) {
 					delete(mp, codexProviderKey)
 					changed = true
 				}
 			}
 			// 兼容旧版 key: code-switch
 			if providerRaw, exists := mp["code-switch"]; exists {
-				if css.isProviderPointingToProxy(providerRaw, proxyURL) {
+				if css.isProviderPointingToProxy(providerRaw) {
 					delete(mp, "code-switch")
 					changed = true
 				}
@@ -344,7 +352,7 @@ func (css *CodexSettingsService) fallbackCleanupConfig(raw map[string]any) bool 
 }
 
 // isProviderPointingToProxy 检查 provider 配置的 base_url 是否指向代理
-func (css *CodexSettingsService) isProviderPointingToProxy(providerRaw any, proxyURL string) bool {
+func (css *CodexSettingsService) isProviderPointingToProxy(providerRaw any) bool {
 	provider, ok := providerRaw.(map[string]any)
 	if !ok {
 		return false
@@ -353,10 +361,7 @@ func (css *CodexSettingsService) isProviderPointingToProxy(providerRaw any, prox
 	if !ok {
 		return false
 	}
-	return strings.EqualFold(
-		strings.TrimSuffix(strings.TrimSpace(baseURL), "/"),
-		strings.TrimSuffix(strings.TrimSpace(proxyURL), "/"),
-	)
+	return css.isProxyBaseURL(baseURL)
 }
 
 // writeConfigToml 将配置写入 config.toml
@@ -475,7 +480,7 @@ func (css *CodexSettingsService) baseURL() string {
 		addr = ":18100"
 	}
 	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
-		return addr
+		return strings.TrimSuffix(strings.TrimSpace(addr), "/")
 	}
 	host := addr
 	if strings.HasPrefix(host, ":") {
@@ -484,7 +489,26 @@ func (css *CodexSettingsService) baseURL() string {
 	if !strings.Contains(host, "://") {
 		host = "http://" + host
 	}
-	return host
+	return strings.TrimSuffix(strings.TrimSpace(host), "/")
+}
+
+func (css *CodexSettingsService) proxyBaseURLWithProvider(providerName string) string {
+	base := css.baseURL()
+	name := strings.TrimSpace(providerName)
+	if name == "" {
+		return base
+	}
+	return base + "/" + url.PathEscape(name)
+}
+
+func (css *CodexSettingsService) isProxyBaseURL(baseURLVal string) bool {
+	candidate := strings.TrimSuffix(strings.TrimSpace(baseURLVal), "/")
+	base := css.baseURL()
+	if strings.EqualFold(candidate, base) {
+		return true
+	}
+	prefix := base + "/"
+	return strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(prefix))
 }
 
 type codexConfig struct {

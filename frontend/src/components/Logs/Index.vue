@@ -49,6 +49,10 @@
             </option>
           </select>
         </label>
+        <label class="filter-field">
+          <span>{{ t('components.logs.filters.date') }}</span>
+          <input v-model="filters.date" type="date" class="mac-select" />
+        </label>
       </div>
       <div class="filter-actions">
         <BaseButton type="submit" :disabled="loading">
@@ -184,7 +188,18 @@ const router = useRouter()
 const logs = ref<RequestLog[]>([])
 const stats = ref<LogStats | null>(null)
 const loading = ref(false)
-const filters = reactive<{ platform: LogPlatform | ''; provider: string }>({ platform: '', provider: '' })
+const toDateInput = (date: Date) => {
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const day = `${date.getDate()}`.padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const filters = reactive<{ platform: LogPlatform | ''; provider: string; date: string }>({
+  platform: '',
+  provider: '',
+  date: toDateInput(new Date()),
+})
 const page = ref(1)
 const PAGE_SIZE = 15
 const providerOptions = ref<string[]>([])
@@ -208,7 +223,7 @@ const openCostDetailModal = async () => {
   costDetailModal.data = []
 
   try {
-    const stats = await fetchProviderDailyStats(filters.platform)
+    const stats = await fetchProviderDailyStats(filters.platform, filters.date)
     // 按金额降序排序，过滤掉金额为 0 的
     costDetailModal.data = (stats ?? [])
       .filter(item => item.cost_total > 0)
@@ -396,11 +411,14 @@ const loadLogs = async () => {
       platform: filters.platform,
       provider: filters.provider,
       limit: 200,
+      date: filters.date,
     })
     logs.value = data ?? []
     page.value = Math.min(page.value, totalPages.value)
   } catch (error) {
     console.error('failed to load request logs', error)
+    logs.value = []
+    page.value = 1
   } finally {
     loading.value = false
   }
@@ -408,10 +426,11 @@ const loadLogs = async () => {
 
 const loadStats = async () => {
   try {
-    const data = await fetchLogStats(filters.platform)
+    const data = await fetchLogStats(filters.platform, filters.date)
     stats.value = data ?? null
   } catch (error) {
     console.error('failed to load log stats', error)
+    stats.value = null
   }
 }
 
@@ -508,12 +527,6 @@ const formatCurrency = (value?: number) => {
   return `$${value.toFixed(4)}`
 }
 
-const startOfTodayLocal = () => {
-  const now = new Date()
-  now.setHours(0, 0, 0, 0)
-  return now
-}
-
 const statsCards = computed(() => {
   const data = stats.value
   const summaryDate = summaryDateLabel.value
@@ -541,33 +554,40 @@ const statsCards = computed(() => {
     {
       key: 'cost',
       label: t('components.logs.tokenLabels.cost'),
-      hint: summaryDate ? t('components.logs.summary.todayScope', { date: summaryDate }) : '',
+      hint: summaryDate ? t('components.logs.summary.dateScope', { date: summaryDate }) : '',
       value: formatCurrency(data?.cost_total ?? 0),
     },
   ]
 })
 
 const summaryDateLabel = computed(() => {
+  if (filters.date) {
+    return filters.date
+  }
   const firstBucket = statsSeries.value.find((item) => item.day)
   const parsed = parseLogDate(firstBucket?.day ?? '')
-  const date = parsed ?? startOfTodayLocal()
-  return `${date.getFullYear()}-${padHour(date.getMonth() + 1)}-${padHour(date.getDate())}`
+  if (!parsed) {
+    return toDateInput(new Date())
+  }
+  return `${parsed.getFullYear()}-${padHour(parsed.getMonth() + 1)}-${padHour(parsed.getDate())}`
 })
 
 const loadProviderOptions = async () => {
   try {
-    const list = await fetchLogProviders(filters.platform)
+    const list = await fetchLogProviders(filters.platform, filters.date)
     providerOptions.value = list ?? []
     if (filters.provider && !providerOptions.value.includes(filters.provider)) {
       filters.provider = ''
     }
   } catch (error) {
     console.error('failed to load provider options', error)
+    providerOptions.value = []
+    filters.provider = ''
   }
 }
 
 watch(
-  () => filters.platform,
+  () => [filters.platform, filters.date],
   async () => {
     await loadProviderOptions()
   },
