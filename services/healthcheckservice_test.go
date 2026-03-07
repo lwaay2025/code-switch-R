@@ -152,7 +152,7 @@ func TestHealthCheck_EndpointResolution(t *testing.T) {
 				APIEndpoint: "",
 			},
 			platform:         "codex",
-			expectedEndpoint: "/responses",
+			expectedEndpoint: "/v1/responses",
 		},
 		{
 			name: "使用平台默认端点（Claude）",

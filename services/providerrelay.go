@@ -223,10 +223,10 @@ func (prs *ProviderRelayService) Addr() string {
 func (prs *ProviderRelayService) registerRoutes(router gin.IRouter) {
 	router.POST("/v1/messages", prs.proxyHandler("claude", "/v1/messages"))
 	router.POST("/:providerName/v1/messages", prs.proxyHandler("claude", "/v1/messages"))
-	router.POST("/responses", prs.proxyHandler("codex", "/responses"))
-	router.POST("/responses/compact", prs.proxyHandler("codex", "/responses"))
-	router.POST("/:providerName/responses", prs.proxyHandler("codex", "/responses"))
-	router.POST("/:providerName/responses/compact", prs.proxyHandler("codex", "/responses"))
+	router.POST("/responses", prs.proxyHandler("codex", "/v1/responses"))
+	router.POST("/responses/compact", prs.proxyHandler("codex", "/v1/responses/compact"))
+	router.POST("/:providerName/responses", prs.proxyHandler("codex", "/v1/responses"))
+	router.POST("/:providerName/responses/compact", prs.proxyHandler("codex", "/v1/responses/compact"))
 
 	// /v1/models 端点（OpenAI-compatible API）
 	// 默认走 Codex 平台（OpenAI/GPT 风格）
@@ -951,8 +951,26 @@ func flattenQuery(values map[string][]string) map[string]string {
 }
 
 func joinURL(base string, endpoint string) string {
-	base = strings.TrimSuffix(base, "/")
+	base = strings.TrimSuffix(strings.TrimSpace(base), "/")
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return base
+	}
 	endpoint = "/" + strings.TrimPrefix(endpoint, "/")
+
+	// Avoid duplicating "/v1" when users configure APIURL with or without it.
+	// Example:
+	//   base=https://api.openai.com/v1 + endpoint=/v1/responses => https://api.openai.com/v1/responses
+	//   base=https://api.openai.com    + endpoint=/v1/responses => https://api.openai.com/v1/responses
+	if strings.HasSuffix(strings.ToLower(base), "/v1") {
+		lowerEndpoint := strings.ToLower(endpoint)
+		if lowerEndpoint == "/v1" {
+			endpoint = ""
+		} else if strings.HasPrefix(lowerEndpoint, "/v1/") {
+			endpoint = endpoint[len("/v1"):]
+		}
+	}
+
 	return base + endpoint
 }
 

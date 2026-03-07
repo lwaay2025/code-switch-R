@@ -54,8 +54,8 @@ func TestResponsesCompactRoute(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("期望 POST 请求，收到 %s", r.Method)
 		}
-		if r.URL.Path != "/responses" {
-			t.Errorf("期望转发路径 /responses，收到 %s", r.URL.Path)
+		if r.URL.Path != "/v1/responses/compact" {
+			t.Errorf("期望转发路径 /v1/responses/compact，收到 %s", r.URL.Path)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -120,8 +120,8 @@ func TestPrefixedCodexRouteTargetsProviderByName(t *testing.T) {
 
 	upstreamB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hitProviderB = true
-		if r.URL.Path != "/responses" {
-			t.Errorf("期望转发路径 /responses，收到 %s", r.URL.Path)
+		if r.URL.Path != "/v1/responses" {
+			t.Errorf("期望转发路径 /v1/responses，收到 %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

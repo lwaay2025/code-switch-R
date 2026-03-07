@@ -31,7 +31,7 @@ type Provider struct {
 
 	// API 端点路径（可选）- 覆盖平台默认端点
 	// 如：GLM 模型需要使用 /v1/chat/completions 而非 /v1/messages
-	// 留空则使用平台默认（claude: /v1/messages, codex: /responses）
+	// 留空则使用平台默认（claude: /v1/messages, codex: /v1/responses）
 	APIEndpoint string `json:"apiEndpoint,omitempty"`
 
 	// 模型白名单 - Provider 原生支持的模型名

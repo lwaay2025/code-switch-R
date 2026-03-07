@@ -200,7 +200,7 @@ func (cts *ConnectivityTestService) getEffectiveEndpoint(provider *Provider, pla
 	case "claude":
 		return "/v1/messages"
 	case "codex":
-		return "/responses"
+		return "/v1/responses"
 	default:
 		return "/v1/chat/completions"
 	}
@@ -348,12 +348,8 @@ func (cts *ConnectivityTestService) truncateMessage(msg string) string {
 
 // buildTargetURL 根据用户配置的端点构建目标 URL
 func (cts *ConnectivityTestService) buildTargetURL(provider *Provider, platform string) string {
-	baseURL := strings.TrimSuffix(provider.APIURL, "/")
 	endpoint := cts.getEffectiveEndpoint(provider, platform)
-	if !strings.HasPrefix(endpoint, "/") {
-		endpoint = "/" + endpoint
-	}
-	return baseURL + endpoint
+	return joinURL(provider.APIURL, endpoint)
 }
 
 // isTimeoutError 检测错误是否为超时类型

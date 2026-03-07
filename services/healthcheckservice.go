@@ -535,12 +535,8 @@ func (hcs *HealthCheckService) checkProvider(ctx context.Context, provider Provi
 		return result
 	}
 
-	// 构建目标 URL
-	baseURL := strings.TrimSuffix(provider.APIURL, "/")
-	if !strings.HasPrefix(endpoint, "/") {
-		endpoint = "/" + endpoint
-	}
-	targetURL := baseURL + endpoint
+	// 构建目标 URL（使用 joinURL 处理尾斜杠与 /v1 去重）
+	targetURL := joinURL(provider.APIURL, endpoint)
 
 	// 创建 HTTP 请求
 	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(reqBody))
@@ -748,7 +744,7 @@ func (hcs *HealthCheckService) getEffectiveEndpoint(provider *Provider, platform
 	case "claude":
 		defaultEndpoint = "/v1/messages"
 	case "codex":
-		defaultEndpoint = "/responses"
+		defaultEndpoint = "/v1/responses"
 	default:
 		defaultEndpoint = "/v1/chat/completions"
 	}
