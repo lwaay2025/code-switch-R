@@ -798,6 +798,7 @@ func (bs *BlacklistService) IsLevelBlacklistEnabled() bool {
 // RetryConfig 重试配置（供 proxyHandler 使用）
 type RetryConfig struct {
 	FailureThreshold    int // 失败阈值（达到后触发拉黑）
+	MaxRetryPerProvider int // 单个 Provider 最大尝试次数（已计算有效值，>=1）
 	RetryWaitSeconds    int // 重试等待时间（秒）
 	DedupeWindowSeconds int // 去重窗口（秒）
 }
@@ -819,10 +820,27 @@ func (bs *BlacklistService) GetRetryConfig() *RetryConfig {
 		if dbThreshold, _, dbErr := bs.settingsService.GetBlacklistSettings(); dbErr == nil && dbThreshold > 0 {
 			result.FailureThreshold = dbThreshold
 		}
+		maxRetry := defaultConfig.MaxRetryPerProvider
+		if maxRetry <= 0 {
+			maxRetry = result.FailureThreshold
+		}
+		if maxRetry < 1 {
+			maxRetry = 1
+		}
+		result.MaxRetryPerProvider = maxRetry
 		return result
+	}
+
+	maxRetry := config.MaxRetryPerProvider
+	if maxRetry <= 0 {
+		maxRetry = config.FailureThreshold
+	}
+	if maxRetry < 1 {
+		maxRetry = 1
 	}
 	return &RetryConfig{
 		FailureThreshold:    config.FailureThreshold,
+		MaxRetryPerProvider: maxRetry,
 		RetryWaitSeconds:    config.RetryWaitSeconds,
 		DedupeWindowSeconds: config.DedupeWindowSeconds,
 	}

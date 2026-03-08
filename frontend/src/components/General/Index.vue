@@ -9,7 +9,18 @@ import NetworkWslSettings from '../Setting/NetworkWslSettings.vue'
 import { fetchAppSettings, saveAppSettings, type AppSettings } from '../../services/appSettings'
 import { checkUpdate, downloadUpdate, restartApp, getUpdateState, setAutoCheckEnabled, type UpdateState } from '../../services/update'
 import { fetchCurrentVersion } from '../../services/version'
-import { getBlacklistSettings, updateBlacklistSettings, getLevelBlacklistEnabled, setLevelBlacklistEnabled, getBlacklistEnabled, setBlacklistEnabled, type BlacklistSettings } from '../../services/settings'
+import {
+  getBlacklistSettings,
+  updateBlacklistSettings,
+  getBlacklistLevelConfig,
+  updateBlacklistLevelConfig,
+  getLevelBlacklistEnabled,
+  setLevelBlacklistEnabled,
+  getBlacklistEnabled,
+  setBlacklistEnabled,
+  type BlacklistSettings,
+  type BlacklistLevelConfig,
+} from '../../services/settings'
 import { fetchConfigImportStatus, importFromPath, type ConfigImportStatus } from '../../services/configImport'
 import { useI18n } from 'vue-i18n'
 import { extractErrorMessage } from '../../utils/error'
@@ -76,6 +87,9 @@ const blacklistEnabled = ref(true)  // 拉黑功能总开关
 const blacklistThreshold = ref(3)
 const blacklistDuration = ref(30)
 const levelBlacklistEnabled = ref(false)
+const retryWaitSeconds = ref(3)
+const maxRetryPerProvider = ref(0)
+const blacklistLevelConfig = ref<BlacklistLevelConfig | null>(null)
 const blacklistLoading = ref(false)
 const blacklistSaving = ref(false)
 
@@ -292,6 +306,18 @@ const loadBlacklistSettings = async () => {
     // 加载等级拉黑开关状态
     const levelEnabled = await getLevelBlacklistEnabled()
     levelBlacklistEnabled.value = levelEnabled
+
+    // 加载等级拉黑配置（包含重试相关配置，写入 JSON 文件）
+    const levelConfig = await getBlacklistLevelConfig()
+    if (levelConfig) {
+      blacklistLevelConfig.value = levelConfig
+      retryWaitSeconds.value = Number.isFinite(levelConfig.retryWaitSeconds) ? levelConfig.retryWaitSeconds : 3
+      maxRetryPerProvider.value = Number.isFinite(levelConfig.maxRetryPerProvider) ? levelConfig.maxRetryPerProvider : 0
+    } else {
+      blacklistLevelConfig.value = null
+      retryWaitSeconds.value = 3
+      maxRetryPerProvider.value = 0
+    }
   } catch (error) {
     console.error('failed to load blacklist settings', error)
     // 使用默认值
@@ -299,6 +325,9 @@ const loadBlacklistSettings = async () => {
     blacklistThreshold.value = 3
     blacklistDuration.value = 30
     levelBlacklistEnabled.value = false
+    retryWaitSeconds.value = 3
+    maxRetryPerProvider.value = 0
+    blacklistLevelConfig.value = null
   } finally {
     blacklistLoading.value = false
   }
@@ -310,6 +339,32 @@ const saveBlacklistSettings = async () => {
   blacklistSaving.value = true
   try {
     await updateBlacklistSettings(blacklistThreshold.value, blacklistDuration.value)
+
+    const normalizedRetryWaitSeconds = Math.max(0, Math.min(300, Math.floor(Number(retryWaitSeconds.value) || 0)))
+    const normalizedMaxRetryPerProvider = Math.max(0, Math.min(10, Math.floor(Number(maxRetryPerProvider.value) || 0)))
+    retryWaitSeconds.value = normalizedRetryWaitSeconds
+    maxRetryPerProvider.value = normalizedMaxRetryPerProvider
+
+    const levelConfig = blacklistLevelConfig.value ?? await getBlacklistLevelConfig()
+    if (!levelConfig) {
+      throw new Error('level blacklist config is unavailable')
+    }
+
+    await updateBlacklistLevelConfig({
+      ...levelConfig,
+      // 为避免配置文件与 UI 不一致，这里同步写入当前 UI 的开关/阈值
+      enableLevelBlacklist: levelBlacklistEnabled.value,
+      failureThreshold: blacklistThreshold.value,
+      retryWaitSeconds: normalizedRetryWaitSeconds,
+      maxRetryPerProvider: normalizedMaxRetryPerProvider,
+    })
+    blacklistLevelConfig.value = {
+      ...levelConfig,
+      enableLevelBlacklist: levelBlacklistEnabled.value,
+      failureThreshold: blacklistThreshold.value,
+      retryWaitSeconds: normalizedRetryWaitSeconds,
+      maxRetryPerProvider: normalizedMaxRetryPerProvider,
+    }
     alert('拉黑配置已保存')
   } catch (error) {
     console.error('failed to save blacklist settings', error)
@@ -660,6 +715,34 @@ onMounted(async () => {
               <option :value="30">30 {{ $t('components.general.label.minutes') }}</option>
               <option :value="60">60 {{ $t('components.general.label.minutes') }}</option>
             </select>
+          </ListItem>
+          <ListItem :label="$t('components.general.label.maxRetryPerProvider')">
+            <div class="toggle-with-hint">
+              <input
+                type="number"
+                min="0"
+                max="10"
+                step="1"
+                v-model.number="maxRetryPerProvider"
+                :disabled="blacklistLoading || blacklistSaving"
+                class="mac-input proxy-address-input"
+              />
+              <span class="hint-text">{{ $t('components.general.label.maxRetryPerProviderHint') }}</span>
+            </div>
+          </ListItem>
+          <ListItem :label="$t('components.general.label.retryWaitSeconds')">
+            <div class="toggle-with-hint">
+              <input
+                type="number"
+                min="0"
+                max="300"
+                step="1"
+                v-model.number="retryWaitSeconds"
+                :disabled="blacklistLoading || blacklistSaving"
+                class="mac-input proxy-address-input"
+              />
+              <span class="hint-text">{{ $t('components.general.label.retryWaitSecondsHint') }}</span>
+            </div>
           </ListItem>
           <ListItem :label="$t('components.general.label.saveBlacklist')">
             <button

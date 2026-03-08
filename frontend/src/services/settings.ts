@@ -10,12 +10,46 @@ export interface BlacklistSettings {
   durationMinutes: number  // 拉黑时长（分钟：15/30/60）
 }
 
+export interface BlacklistLevelConfig {
+  enableLevelBlacklist: boolean
+  failureThreshold: number
+  dedupeWindowSeconds: number
+  maxRetryPerProvider: number
+  retryWaitSeconds: number
+  normalDegradeIntervalHours: number
+  forgivenessHours: number
+  jumpPenaltyWindowHours: number
+  l1DurationMinutes: number
+  l2DurationMinutes: number
+  l3DurationMinutes: number
+  l4DurationMinutes: number
+  l5DurationMinutes: number
+  fallbackMode: string
+  fallbackDurationMinutes: number
+}
+
 /**
  * 获取拉黑配置
  */
 export const getBlacklistSettings = async (): Promise<BlacklistSettings> => {
   const result = await Call.ByName(`${SETTINGS_SERVICE}.GetBlacklistSettingsStruct`)
   return result as BlacklistSettings
+}
+
+/**
+ * 获取等级拉黑配置（JSON文件 + DB覆盖部分字段）
+ */
+export const getBlacklistLevelConfig = async (): Promise<BlacklistLevelConfig | null> => {
+  const result = await Call.ByName(`${SETTINGS_SERVICE}.GetBlacklistLevelConfig`)
+  return (result ?? null) as BlacklistLevelConfig | null
+}
+
+/**
+ * 更新等级拉黑配置（写入 ~/.code-switch/blacklist-config.json）
+ * 注意：必须传入完整结构，避免覆盖其他字段为零值。
+ */
+export const updateBlacklistLevelConfig = async (config: BlacklistLevelConfig): Promise<void> => {
+  await Call.ByName(`${SETTINGS_SERVICE}.UpdateBlacklistLevelConfig`, config)
 }
 
 /**

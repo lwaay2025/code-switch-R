@@ -309,9 +309,9 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 			}
 			if isBlacklisted, until := prs.blacklistService.IsBlacklisted(kind, provider.Name); isBlacklisted {
 				c.JSON(http.StatusForbidden, gin.H{
-					"error":      fmt.Sprintf("provider '%s' is blacklisted", provider.Name),
+					"error":       fmt.Sprintf("provider '%s' is blacklisted", provider.Name),
 					"blacklisted": true,
-					"until":      until.Unix(),
+					"until":       until.Unix(),
 				})
 				return
 			}
@@ -364,7 +364,7 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 				errorMsg = forwardErr.Error()
 			}
 			c.JSON(http.StatusBadGateway, gin.H{
-				"error":        fmt.Sprintf("provider '%s' request failed: %s", provider.Name, errorMsg),
+				"error":         fmt.Sprintf("provider '%s' request failed: %s", provider.Name, errorMsg),
 				"provider_name": provider.Name,
 			})
 			return
@@ -444,15 +444,14 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 		// 获取拉黑功能开关状态
 		blacklistEnabled := prs.blacklistService.ShouldUseFixedMode()
 
-		// 【拉黑模式】：同 Provider 重试直到被拉黑，然后切换到下一个 Provider
-		// 设计目标：Claude Code 单次请求最多重试 3 次，但拉黑阈值可能是 5
-		// 通过内部重试机制，在单次请求中累积足够失败次数触发拉黑
+		// 【拉黑模式】：同 Provider 内重试（maxRetryPerProvider），失败按“整组重试”计数后切换到下一个 Provider
+		// 设计目标：解耦“重试次数”与“失败阈值/拉黑阈值”，避免单次请求内重试导致失败计数过快累加
 		if blacklistEnabled {
-			fmt.Printf("[INFO] 🔒 拉黑模式已开启（同 Provider 重试到拉黑再切换）\n")
+			fmt.Printf("[INFO] 🔒 拉黑模式已开启（同 Provider 内重试，失败按组计数后切换）\n")
 
 			// 获取重试配置
 			retryConfig := prs.blacklistService.GetRetryConfig()
-			maxRetryPerProvider := retryConfig.FailureThreshold
+			maxRetryPerProvider := retryConfig.MaxRetryPerProvider
 			retryWaitSeconds := retryConfig.RetryWaitSeconds
 			fmt.Printf("[INFO] 重试配置: 每 Provider 最多 %d 次重试，间隔 %d 秒\n",
 				maxRetryPerProvider, retryWaitSeconds)
@@ -492,7 +491,10 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 					effectiveEndpoint := provider.GetEffectiveEndpoint(endpoint)
 
 					// 同 Provider 内重试循环
-					for retryCount := 0; retryCount < maxRetryPerProvider; retryCount++ {
+					attemptedCount := 0
+					stoppedEarlyDueToConcurrency := false
+					var lastAttemptErr error
+					for attempt := 0; attempt < maxRetryPerProvider; attempt++ {
 						// 再次检查是否已被拉黑（重试过程中可能被拉黑）
 						if blacklisted, _ := prs.blacklistService.IsBlacklisted(kind, provider.Name); blacklisted {
 							fmt.Printf("[INFO] 🚫 Provider %s 已被拉黑，切换到下一个\n", provider.Name)
@@ -500,7 +502,7 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 						}
 
 						fmt.Printf("[INFO] [拉黑模式] Provider: %s (Level %d) | 重试 %d/%d | Model: %s\n",
-							provider.Name, level, retryCount+1, maxRetryPerProvider, effectiveModel)
+							provider.Name, level, attempt+1, maxRetryPerProvider, effectiveModel)
 
 						release, acquired := prs.concurrencyManager.TryAcquire(
 							providerConcurrencyKey(kind, provider.Name),
@@ -509,10 +511,12 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 						if !acquired {
 							busySkipped++
 							fmt.Printf("[INFO] ⏭️ Provider %s 达到并发上限(%d)，跳过到下一个\n", provider.Name, provider.MaxConcurrentRequests)
+							stoppedEarlyDueToConcurrency = true
 							break
 						}
 
 						totalAttempts++
+						attemptedCount++
 						attemptedUpstream = true
 						startTime := time.Now()
 						ok, err, responseWritten := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
@@ -521,7 +525,7 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 
 						if ok {
 							fmt.Printf("[INFO] ✓ 成功: %s | 重试 %d 次 | 耗时: %.2fs\n",
-								provider.Name, retryCount+1, duration.Seconds())
+								provider.Name, attempt+1, duration.Seconds())
 							if err := prs.blacklistService.RecordSuccess(kind, provider.Name); err != nil {
 								fmt.Printf("[WARN] 清零失败计数失败: %v\n", err)
 							}
@@ -529,16 +533,14 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 							return
 						}
 
-						// 失败处理
-						lastError = err
-						lastProvider = provider.Name
+						lastAttemptErr = err
 
 						errorMsg := "未知错误"
 						if err != nil {
 							errorMsg = err.Error()
 						}
 						fmt.Printf("[WARN] ✗ 失败: %s | 重试 %d/%d | 错误: %s | 耗时: %.2fs\n",
-							provider.Name, retryCount+1, maxRetryPerProvider, errorMsg, duration.Seconds())
+							provider.Name, attempt+1, maxRetryPerProvider, errorMsg, duration.Seconds())
 
 						// 客户端中断不计入失败次数，直接返回
 						if errors.Is(err, errClientAbort) {
@@ -546,26 +548,31 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 							return
 						}
 
-						// 记录失败次数（可能触发拉黑）
-						if err := prs.blacklistService.RecordFailure(kind, provider.Name); err != nil {
-							fmt.Printf("[ERROR] 记录失败到黑名单失败: %v\n", err)
-						}
-
 						if responseWritten {
 							fmt.Printf("[WARN] 响应已写入客户端，停止重试与降级\n")
+							if err := prs.blacklistService.RecordFailure(kind, provider.Name); err != nil {
+								fmt.Printf("[ERROR] 记录失败到黑名单失败: %v\n", err)
+							}
 							return
 						}
 
-						// 检查是否刚被拉黑
-						if blacklisted, _ := prs.blacklistService.IsBlacklisted(kind, provider.Name); blacklisted {
-							fmt.Printf("[INFO] 🚫 Provider %s 达到失败阈值，已被拉黑，切换到下一个\n", provider.Name)
-							break
-						}
-
 						// 等待后重试（除非是最后一次）
-						if retryCount < maxRetryPerProvider-1 {
+						if attempt < maxRetryPerProvider-1 {
 							fmt.Printf("[INFO] ⏳ 等待 %d 秒后重试...\n", retryWaitSeconds)
 							time.Sleep(time.Duration(retryWaitSeconds) * time.Second)
+						}
+					}
+
+					if stoppedEarlyDueToConcurrency {
+						continue
+					}
+
+					// 同 Provider 重试已耗尽：仅计为 1 次失败（用于累加 FailureThreshold）
+					if attemptedCount > 0 {
+						lastError = lastAttemptErr
+						lastProvider = provider.Name
+						if err := prs.blacklistService.RecordFailure(kind, provider.Name); err != nil {
+							fmt.Printf("[ERROR] 记录失败到黑名单失败: %v\n", err)
 						}
 					}
 				}
@@ -592,7 +599,7 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 				"lastProvider":  lastProvider,
 				"totalAttempts": totalAttempts,
 				"mode":          "blacklist_retry",
-				"hint":          "拉黑模式已开启，同 Provider 重试到拉黑再切换。如需立即降级请关闭拉黑功能",
+				"hint":          "拉黑模式已开启，同 Provider 内重试失败按组计数后切换。如需立即降级请关闭拉黑功能",
 			})
 			return
 		}
@@ -1435,13 +1442,13 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 		// 获取拉黑功能开关状态
 		blacklistEnabled := prs.blacklistService.ShouldUseFixedMode()
 
-		// 【拉黑模式】：同 Provider 重试直到被拉黑，然后切换到下一个 Provider
+		// 【拉黑模式】：同 Provider 内重试（maxRetryPerProvider），失败按“整组重试”计数后切换到下一个 Provider
 		if blacklistEnabled {
-			fmt.Printf("[Gemini] 🔒 拉黑模式已开启（同 Provider 重试到拉黑再切换）\n")
+			fmt.Printf("[Gemini] 🔒 拉黑模式已开启（同 Provider 内重试，失败按组计数后切换）\n")
 
 			// 获取重试配置
 			retryConfig := prs.blacklistService.GetRetryConfig()
-			maxRetryPerProvider := retryConfig.FailureThreshold
+			maxRetryPerProvider := retryConfig.MaxRetryPerProvider
 			retryWaitSeconds := retryConfig.RetryWaitSeconds
 			fmt.Printf("[Gemini] 重试配置: 每 Provider 最多 %d 次重试，间隔 %d 秒\n",
 				maxRetryPerProvider, retryWaitSeconds)
@@ -1469,7 +1476,10 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 					requestLog.Model = provider.Model
 
 					// 同 Provider 内重试循环
-					for retryCount := 0; retryCount < maxRetryPerProvider; retryCount++ {
+					attemptedCount := 0
+					stoppedEarlyDueToConcurrency := false
+					var lastAttemptErrMsg string
+					for attempt := 0; attempt < maxRetryPerProvider; attempt++ {
 						// 再次检查是否已被拉黑（重试过程中可能被拉黑）
 						if blacklisted, _ := prs.blacklistService.IsBlacklisted("gemini", provider.Name); blacklisted {
 							fmt.Printf("[Gemini] 🚫 Provider %s 已被拉黑，切换到下一个\n", provider.Name)
@@ -1477,7 +1487,7 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 						}
 
 						fmt.Printf("[Gemini] [拉黑模式] Provider: %s (Level %d) | 重试 %d/%d\n",
-							provider.Name, level, retryCount+1, maxRetryPerProvider)
+							provider.Name, level, attempt+1, maxRetryPerProvider)
 
 						release, acquired := prs.concurrencyManager.TryAcquire(
 							providerConcurrencyKey("gemini", provider.Name),
@@ -1486,15 +1496,17 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 						if !acquired {
 							busySkipped++
 							fmt.Printf("[Gemini] ⏭️ Provider %s 达到并发上限(%d)，跳过到下一个\n", provider.Name, provider.MaxConcurrentRequests)
+							stoppedEarlyDueToConcurrency = true
 							break
 						}
 
 						totalAttempts++
+						attemptedCount++
 						attemptedUpstream = true
 						ok, errMsg, responseWritten := prs.forwardGeminiRequest(c, &provider, endpoint, bodyBytes, isStream, requestLog)
 						release()
 						if ok {
-							fmt.Printf("[Gemini] ✓ 成功: %s | 重试 %d 次\n", provider.Name, retryCount+1)
+							fmt.Printf("[Gemini] ✓ 成功: %s | 重试 %d 次\n", provider.Name, attempt+1)
 							_ = prs.blacklistService.RecordSuccess("gemini", provider.Name)
 							prs.setLastUsedProvider("gemini", provider.Name)
 							return
@@ -1508,26 +1520,27 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 						}
 
 						// 失败处理
-						lastError = errMsg
-						lastProvider = provider.Name
+						lastAttemptErrMsg = errMsg
 
 						fmt.Printf("[Gemini] ✗ 失败: %s | 重试 %d/%d | 错误: %s\n",
-							provider.Name, retryCount+1, maxRetryPerProvider, errMsg)
-
-						// 记录失败次数（可能触发拉黑）
-						_ = prs.blacklistService.RecordFailure("gemini", provider.Name)
-
-						// 检查是否刚被拉黑
-						if blacklisted, _ := prs.blacklistService.IsBlacklisted("gemini", provider.Name); blacklisted {
-							fmt.Printf("[Gemini] 🚫 Provider %s 达到失败阈值，已被拉黑，切换到下一个\n", provider.Name)
-							break
-						}
+							provider.Name, attempt+1, maxRetryPerProvider, errMsg)
 
 						// 等待后重试（除非是最后一次）
-						if retryCount < maxRetryPerProvider-1 {
+						if attempt < maxRetryPerProvider-1 {
 							fmt.Printf("[Gemini] ⏳ 等待 %d 秒后重试...\n", retryWaitSeconds)
 							time.Sleep(time.Duration(retryWaitSeconds) * time.Second)
 						}
+					}
+
+					if stoppedEarlyDueToConcurrency {
+						continue
+					}
+
+					// 同 Provider 重试已耗尽：仅计为 1 次失败（用于累加 FailureThreshold）
+					if attemptedCount > 0 {
+						lastError = lastAttemptErrMsg
+						lastProvider = provider.Name
+						_ = prs.blacklistService.RecordFailure("gemini", provider.Name)
 					}
 				}
 			}
@@ -1553,7 +1566,7 @@ func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.Handl
 				"lastProvider":  lastProvider,
 				"totalAttempts": totalAttempts,
 				"mode":          "blacklist_retry",
-				"hint":          "拉黑模式已开启，同 Provider 重试到拉黑再切换。如需立即降级请关闭拉黑功能",
+				"hint":          "拉黑模式已开启，同 Provider 内重试失败按组计数后切换。如需立即降级请关闭拉黑功能",
 			})
 			return
 		}
@@ -1903,13 +1916,13 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 		// 获取拉黑功能开关状态
 		blacklistEnabled := prs.blacklistService.ShouldUseFixedMode()
 
-		// 【拉黑模式】：同 Provider 重试直到被拉黑，然后切换到下一个 Provider
+		// 【拉黑模式】：同 Provider 内重试（maxRetryPerProvider），失败按“整组重试”计数后切换到下一个 Provider
 		if blacklistEnabled {
-			fmt.Printf("[CustomCLI][INFO] 🔒 拉黑模式已开启（同 Provider 重试到拉黑再切换）\n")
+			fmt.Printf("[CustomCLI][INFO] 🔒 拉黑模式已开启（同 Provider 内重试，失败按组计数后切换）\n")
 
 			// 获取重试配置
 			retryConfig := prs.blacklistService.GetRetryConfig()
-			maxRetryPerProvider := retryConfig.FailureThreshold
+			maxRetryPerProvider := retryConfig.MaxRetryPerProvider
 			retryWaitSeconds := retryConfig.RetryWaitSeconds
 			fmt.Printf("[CustomCLI][INFO] 重试配置: 每 Provider 最多 %d 次重试，间隔 %d 秒\n",
 				maxRetryPerProvider, retryWaitSeconds)
@@ -1949,7 +1962,10 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 					effectiveEndpoint := provider.GetEffectiveEndpoint(endpoint)
 
 					// 同 Provider 内重试循环
-					for retryCount := 0; retryCount < maxRetryPerProvider; retryCount++ {
+					attemptedCount := 0
+					stoppedEarlyDueToConcurrency := false
+					var lastAttemptErr error
+					for attempt := 0; attempt < maxRetryPerProvider; attempt++ {
 						// 再次检查是否已被拉黑（重试过程中可能被拉黑）
 						if blacklisted, _ := prs.blacklistService.IsBlacklisted(kind, provider.Name); blacklisted {
 							fmt.Printf("[CustomCLI][INFO] 🚫 Provider %s 已被拉黑，切换到下一个\n", provider.Name)
@@ -1957,7 +1973,7 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 						}
 
 						fmt.Printf("[CustomCLI][INFO] [拉黑模式] Provider: %s (Level %d) | 重试 %d/%d | Model: %s\n",
-							provider.Name, level, retryCount+1, maxRetryPerProvider, effectiveModel)
+							provider.Name, level, attempt+1, maxRetryPerProvider, effectiveModel)
 
 						release, acquired := prs.concurrencyManager.TryAcquire(
 							providerConcurrencyKey(kind, provider.Name),
@@ -1966,10 +1982,12 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 						if !acquired {
 							busySkipped++
 							fmt.Printf("[CustomCLI][INFO] ⏭️ Provider %s 达到并发上限(%d)，跳过到下一个\n", provider.Name, provider.MaxConcurrentRequests)
+							stoppedEarlyDueToConcurrency = true
 							break
 						}
 
 						totalAttempts++
+						attemptedCount++
 						attemptedUpstream = true
 						startTime := time.Now()
 						ok, err, responseWritten := prs.forwardRequest(c, kind, provider, effectiveEndpoint, query, clientHeaders, currentBodyBytes, isStream, effectiveModel)
@@ -1978,7 +1996,7 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 
 						if ok {
 							fmt.Printf("[CustomCLI][INFO] ✓ 成功: %s | 重试 %d 次 | 耗时: %.2fs\n",
-								provider.Name, retryCount+1, duration.Seconds())
+								provider.Name, attempt+1, duration.Seconds())
 							if err := prs.blacklistService.RecordSuccess(kind, provider.Name); err != nil {
 								fmt.Printf("[CustomCLI][WARN] 清零失败计数失败: %v\n", err)
 							}
@@ -1986,16 +2004,14 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 							return
 						}
 
-						// 失败处理
-						lastError = err
-						lastProvider = provider.Name
+						lastAttemptErr = err
 
 						errorMsg := "未知错误"
 						if err != nil {
 							errorMsg = err.Error()
 						}
 						fmt.Printf("[CustomCLI][WARN] ✗ 失败: %s | 重试 %d/%d | 错误: %s | 耗时: %.2fs\n",
-							provider.Name, retryCount+1, maxRetryPerProvider, errorMsg, duration.Seconds())
+							provider.Name, attempt+1, maxRetryPerProvider, errorMsg, duration.Seconds())
 
 						// 客户端中断不计入失败次数，直接返回
 						if errors.Is(err, errClientAbort) {
@@ -2003,26 +2019,31 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 							return
 						}
 
-						// 记录失败次数（可能触发拉黑）
-						if err := prs.blacklistService.RecordFailure(kind, provider.Name); err != nil {
-							fmt.Printf("[CustomCLI][ERROR] 记录失败到黑名单失败: %v\n", err)
-						}
-
 						if responseWritten {
 							fmt.Printf("[CustomCLI][WARN] 响应已写入客户端，停止重试与降级\n")
+							if err := prs.blacklistService.RecordFailure(kind, provider.Name); err != nil {
+								fmt.Printf("[CustomCLI][ERROR] 记录失败到黑名单失败: %v\n", err)
+							}
 							return
 						}
 
-						// 检查是否刚被拉黑
-						if blacklisted, _ := prs.blacklistService.IsBlacklisted(kind, provider.Name); blacklisted {
-							fmt.Printf("[CustomCLI][INFO] 🚫 Provider %s 达到失败阈值，已被拉黑，切换到下一个\n", provider.Name)
-							break
-						}
-
 						// 等待后重试（除非是最后一次）
-						if retryCount < maxRetryPerProvider-1 {
+						if attempt < maxRetryPerProvider-1 {
 							fmt.Printf("[CustomCLI][INFO] ⏳ 等待 %d 秒后重试...\n", retryWaitSeconds)
 							time.Sleep(time.Duration(retryWaitSeconds) * time.Second)
+						}
+					}
+
+					if stoppedEarlyDueToConcurrency {
+						continue
+					}
+
+					// 同 Provider 重试已耗尽：仅计为 1 次失败（用于累加 FailureThreshold）
+					if attemptedCount > 0 {
+						lastError = lastAttemptErr
+						lastProvider = provider.Name
+						if err := prs.blacklistService.RecordFailure(kind, provider.Name); err != nil {
+							fmt.Printf("[CustomCLI][ERROR] 记录失败到黑名单失败: %v\n", err)
 						}
 					}
 				}
@@ -2049,7 +2070,7 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 				"lastProvider":  lastProvider,
 				"totalAttempts": totalAttempts,
 				"mode":          "blacklist_retry",
-				"hint":          "拉黑模式已开启，同 Provider 重试到拉黑再切换。如需立即降级请关闭拉黑功能",
+				"hint":          "拉黑模式已开启，同 Provider 内重试失败按组计数后切换。如需立即降级请关闭拉黑功能",
 			})
 			return
 		}

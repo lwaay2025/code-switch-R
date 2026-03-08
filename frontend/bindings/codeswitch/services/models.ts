@@ -151,7 +151,12 @@ export class BlacklistLevelConfig {
     "dedupeWindowSeconds": number;
 
     /**
-     * 同 Provider 重试等待时间（秒），必须 > DedupeWindowSeconds
+     * 单个 Provider 最大尝试次数（0=默认跟随 FailureThreshold）
+     */
+    "maxRetryPerProvider": number;
+
+    /**
+     * 同 Provider 重试间隔（秒）
      */
     "retryWaitSeconds": number;
 
@@ -218,6 +223,9 @@ export class BlacklistLevelConfig {
         }
         if (!("dedupeWindowSeconds" in $$source)) {
             this["dedupeWindowSeconds"] = 0;
+        }
+        if (!("maxRetryPerProvider" in $$source)) {
+            this["maxRetryPerProvider"] = 0;
         }
         if (!("retryWaitSeconds" in $$source)) {
             this["retryWaitSeconds"] = 0;
@@ -2377,6 +2385,11 @@ export class RetryConfig {
     "FailureThreshold": number;
 
     /**
+     * 单个 Provider 最大尝试次数（已计算有效值，>=1）
+     */
+    "MaxRetryPerProvider": number;
+
+    /**
      * 重试等待时间（秒）
      */
     "RetryWaitSeconds": number;
@@ -2390,6 +2403,9 @@ export class RetryConfig {
     constructor($$source: Partial<RetryConfig> = {}) {
         if (!("FailureThreshold" in $$source)) {
             this["FailureThreshold"] = 0;
+        }
+        if (!("MaxRetryPerProvider" in $$source)) {
+            this["MaxRetryPerProvider"] = 0;
         }
         if (!("RetryWaitSeconds" in $$source)) {
             this["RetryWaitSeconds"] = 0;

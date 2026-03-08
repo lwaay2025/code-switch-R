@@ -25,7 +25,8 @@ type BlacklistLevelConfig struct {
 	// 基础配置
 	FailureThreshold    int `json:"failureThreshold"`    // 失败阈值（连续失败次数）
 	DedupeWindowSeconds int `json:"dedupeWindowSeconds"` // 去重窗口（秒）
-	RetryWaitSeconds    int `json:"retryWaitSeconds"`    // 同 Provider 重试等待时间（秒），必须 > DedupeWindowSeconds
+	MaxRetryPerProvider int `json:"maxRetryPerProvider"` // 单个 Provider 最大尝试次数（0=默认跟随 FailureThreshold）
+	RetryWaitSeconds    int `json:"retryWaitSeconds"`    // 同 Provider 重试间隔（秒）
 
 	// 降级配置
 	NormalDegradeIntervalHours float64 `json:"normalDegradeIntervalHours"` // 正常降级间隔（小时）
@@ -50,7 +51,8 @@ func DefaultBlacklistLevelConfig() *BlacklistLevelConfig {
 		EnableLevelBlacklist:       false, // 默认关闭，向后兼容
 		FailureThreshold:           3,
 		DedupeWindowSeconds:        2,
-		RetryWaitSeconds:           3, // 必须 > DedupeWindowSeconds，否则重试不会计入失败次数
+		MaxRetryPerProvider:        0, // 0=默认跟随 FailureThreshold（保持旧行为）
+		RetryWaitSeconds:           3,
 		NormalDegradeIntervalHours: 1.0,
 		ForgivenessHours:           3.0,
 		JumpPenaltyWindowHours:     2.5,
