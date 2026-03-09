@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -95,6 +96,194 @@ func TestResponsesCompactRoute(t *testing.T) {
 	if w.Code == http.StatusNotFound {
 		t.Fatalf("/responses/compact 不应返回 404，响应体: %s", w.Body.String())
 	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+	if !upstreamHit {
+		t.Fatal("期望命中 Codex 转发流程并请求上游，但实际上未命中")
+	}
+}
+
+func TestV1ResponsesCompactRoute(t *testing.T) {
+	isolateHomeDir(t)
+	gin.SetMode(gin.TestMode)
+
+	upstreamHit := false
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHit = true
+
+		if r.Method != http.MethodPost {
+			t.Errorf("期望 POST 请求，收到 %s", r.Method)
+		}
+		if r.URL.Path != "/v1/responses/compact" {
+			t.Errorf("期望转发路径 /v1/responses/compact，收到 %s", r.URL.Path)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"resp_v1_compact","object":"response","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer upstreamServer.Close()
+
+	providerService := NewProviderService()
+	settingsService := &SettingsService{}
+	blacklistService := NewBlacklistService(settingsService, nil)
+
+	testProvider := Provider{
+		ID:      1,
+		Name:    "TestCodexProvider",
+		APIURL:  upstreamServer.URL,
+		APIKey:  "test-api-key",
+		Enabled: true,
+		Level:   1,
+	}
+
+	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	router := gin.New()
+	relayService.registerRoutes(router)
+
+	body := strings.NewReader(`{"model":"gpt-4.1","input":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code == http.StatusNotFound {
+		t.Fatalf("/v1/responses/compact 不应返回 404，响应体: %s", w.Body.String())
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+	if !upstreamHit {
+		t.Fatal("期望命中 Codex 转发流程并请求上游，但实际上未命中")
+	}
+}
+
+func TestResponsesCompactPassthroughWhenUsageMissing(t *testing.T) {
+	isolateHomeDir(t)
+	gin.SetMode(gin.TestMode)
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses/compact" {
+			t.Errorf("期望转发路径 /v1/responses/compact，收到 %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// 模拟 compact 响应不返回 usage 的情况：不应因为 output_tokens==0 被代理吞掉
+		_, _ = w.Write([]byte(`{"id":"resp_compact_no_usage","object":"response"}`))
+	}))
+	defer upstreamServer.Close()
+
+	providerService := NewProviderService()
+	settingsService := &SettingsService{}
+	blacklistService := NewBlacklistService(settingsService, nil)
+
+	testProvider := Provider{
+		ID:      1,
+		Name:    "TestCodexProvider",
+		APIURL:  upstreamServer.URL,
+		APIKey:  "test-api-key",
+		Enabled: true,
+		Level:   1,
+	}
+
+	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	router := gin.New()
+	relayService.registerRoutes(router)
+
+	body := strings.NewReader(`{"model":"gpt-4.1","input":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+	if w.Body.String() != `{"id":"resp_compact_no_usage","object":"response"}` {
+		t.Fatalf("期望响应体原样透传，收到: %s", w.Body.String())
+	}
+}
+
+func TestResponsesCompactStripsStoreAndStream(t *testing.T) {
+	isolateHomeDir(t)
+	gin.SetMode(gin.TestMode)
+
+	upstreamHit := false
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHit = true
+		if r.URL.Path != "/v1/responses/compact" {
+			t.Errorf("期望转发路径 /v1/responses/compact，收到 %s", r.URL.Path)
+		}
+
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("读取上游请求体失败: %v", err)
+		}
+
+		var req map[string]any
+		if err := json.Unmarshal(bodyBytes, &req); err != nil {
+			t.Fatalf("上游收到的请求体不是有效 JSON: %v, body=%s", err, string(bodyBytes))
+		}
+
+		if _, ok := req["store"]; ok {
+			t.Fatalf("compact 请求体不应包含 store 字段，body=%s", string(bodyBytes))
+		}
+		if _, ok := req["stream"]; ok {
+			t.Fatalf("compact 请求体不应包含 stream 字段，body=%s", string(bodyBytes))
+		}
+
+		if req["model"] != "gpt-5.3-codex" {
+			t.Fatalf("期望 model=gpt-5.3-codex，收到 %v", req["model"])
+		}
+		if _, ok := req["input"]; !ok {
+			t.Fatalf("期望请求体包含 input 字段，body=%s", string(bodyBytes))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"resp_compact_strip","object":"response"}`))
+	}))
+	defer upstreamServer.Close()
+
+	providerService := NewProviderService()
+	settingsService := &SettingsService{}
+	blacklistService := NewBlacklistService(settingsService, nil)
+
+	testProvider := Provider{
+		ID:      1,
+		Name:    "TestCodexProvider",
+		APIURL:  upstreamServer.URL,
+		APIKey:  "test-api-key",
+		Enabled: true,
+		Level:   1,
+	}
+
+	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	router := gin.New()
+	relayService.registerRoutes(router)
+
+	body := strings.NewReader(`{"model":"gpt-5.3-codex","input":[{"role":"user","content":"hello"}],"store":true,"stream":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
 	if w.Code != http.StatusOK {
 		t.Fatalf("期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, w.Code, w.Body.String())
 	}

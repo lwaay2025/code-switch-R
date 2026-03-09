@@ -46,6 +46,27 @@ var errClientAbort = errors.New("client aborted, skip failure count")
 // errTokenZero 表示上游返回 2xx，但解析到 output_tokens=0（视为失败）
 var errTokenZero = errors.New("output_tokens is 0")
 
+func isResponsesCompactVariantEndpoint(endpoint string) bool {
+	lowerEndpoint := strings.ToLower(strings.TrimSpace(endpoint))
+	return strings.Contains(lowerEndpoint, "/responses/compact")
+}
+
+func normalizeOpenAIResponsesCompactRequestBody(bodyBytes []byte) ([]byte, bool, error) {
+	if len(bytes.TrimSpace(bodyBytes)) == 0 {
+		return bodyBytes, false, nil
+	}
+
+	withoutStore, err := sjson.DeleteBytes(bodyBytes, "store")
+	if err != nil {
+		return nil, false, err
+	}
+	withoutStream, err := sjson.DeleteBytes(withoutStore, "stream")
+	if err != nil {
+		return nil, false, err
+	}
+	return withoutStream, !bytes.Equal(withoutStream, bodyBytes), nil
+}
+
 func isLikelyClientAbortErr(c *gin.Context, err error) bool {
 	if err == nil {
 		return false
@@ -223,6 +244,14 @@ func (prs *ProviderRelayService) Addr() string {
 func (prs *ProviderRelayService) registerRoutes(router gin.IRouter) {
 	router.POST("/v1/messages", prs.proxyHandler("claude", "/v1/messages"))
 	router.POST("/:providerName/v1/messages", prs.proxyHandler("claude", "/v1/messages"))
+
+	// OpenAI Responses API-compatible routes (Codex / OpenAI Gateway)
+	// Keep both "/responses" and "/v1/responses" to match different client base_url behaviors.
+	router.POST("/v1/responses", prs.proxyHandler("codex", "/v1/responses"))
+	router.POST("/v1/responses/compact", prs.proxyHandler("codex", "/v1/responses/compact"))
+	router.POST("/:providerName/v1/responses", prs.proxyHandler("codex", "/v1/responses"))
+	router.POST("/:providerName/v1/responses/compact", prs.proxyHandler("codex", "/v1/responses/compact"))
+
 	router.POST("/responses", prs.proxyHandler("codex", "/v1/responses"))
 	router.POST("/responses/compact", prs.proxyHandler("codex", "/v1/responses/compact"))
 	router.POST("/:providerName/responses", prs.proxyHandler("codex", "/v1/responses"))
@@ -254,6 +283,16 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 				return
 			}
 			bodyBytes = data
+			c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		}
+
+		if isResponsesCompactVariantEndpoint(endpoint) {
+			normalized, _, err := normalizeOpenAIResponsesCompactRequestBody(bodyBytes)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+				return
+			}
+			bodyBytes = normalized
 			c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		}
 
@@ -329,7 +368,10 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 
 			query := flattenQuery(c.Request.URL.Query())
 			clientHeaders := cloneHeaders(c.Request.Header)
-			effectiveEndpoint := provider.GetEffectiveEndpoint(endpoint)
+			effectiveEndpoint := endpoint
+			if !isResponsesCompactVariantEndpoint(endpoint) {
+				effectiveEndpoint = provider.GetEffectiveEndpoint(endpoint)
+			}
 			release, acquired := prs.concurrencyManager.TryAcquire(
 				providerConcurrencyKey(kind, provider.Name),
 				provider.MaxConcurrentRequests,
@@ -488,7 +530,10 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 					}
 
 					// 获取有效端点
-					effectiveEndpoint := provider.GetEffectiveEndpoint(endpoint)
+					effectiveEndpoint := endpoint
+					if !isResponsesCompactVariantEndpoint(endpoint) {
+						effectiveEndpoint = provider.GetEffectiveEndpoint(endpoint)
+					}
 
 					// 同 Provider 内重试循环
 					attemptedCount := 0
@@ -640,7 +685,10 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 
 				// 尝试发送请求
 				// 获取有效的端点（用户配置优先）
-				effectiveEndpoint := provider.GetEffectiveEndpoint(endpoint)
+				effectiveEndpoint := endpoint
+				if !isResponsesCompactVariantEndpoint(endpoint) {
+					effectiveEndpoint = provider.GetEffectiveEndpoint(endpoint)
+				}
 				release, acquired := prs.concurrencyManager.TryAcquire(
 					providerConcurrencyKey(kind, provider.Name),
 					provider.MaxConcurrentRequests,
@@ -904,7 +952,7 @@ func (prs *ProviderRelayService) forwardRequest(
 		if !isStream {
 			body := resp.Bytes()
 			parseNonStreamTokenUsage(kind, body, requestLog)
-			if requestLog.OutputTokens == 0 {
+			if requestLog.OutputTokens == 0 && !isResponsesCompactVariantEndpoint(endpoint) {
 				return false, errTokenZero, false
 			}
 			_, copyErr := resp.ToHttpResponseWriter(c.Writer)
@@ -920,7 +968,7 @@ func (prs *ProviderRelayService) forwardRequest(
 			fmt.Printf("[WARN] 复制响应到客户端失败（不影响provider成功判定）: %v\n", copyErr)
 			return true, nil, true
 		}
-		if requestLog.OutputTokens == 0 {
+		if requestLog.OutputTokens == 0 && !isResponsesCompactVariantEndpoint(endpoint) {
 			return false, errTokenZero, true
 		}
 		return true, nil, true
@@ -1959,7 +2007,10 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 					}
 
 					// 获取有效端点
-					effectiveEndpoint := provider.GetEffectiveEndpoint(endpoint)
+					effectiveEndpoint := endpoint
+					if !isResponsesCompactVariantEndpoint(endpoint) {
+						effectiveEndpoint = provider.GetEffectiveEndpoint(endpoint)
+					}
 
 					// 同 Provider 内重试循环
 					attemptedCount := 0
@@ -2104,7 +2155,10 @@ func (prs *ProviderRelayService) customCliProxyHandler() gin.HandlerFunc {
 
 				fmt.Printf("[CustomCLI][INFO]   [%d/%d] Provider: %s | Model: %s\n", i+1, len(providersInLevel), provider.Name, effectiveModel)
 				// 获取有效的端点（用户配置优先）
-				effectiveEndpoint := provider.GetEffectiveEndpoint(endpoint)
+				effectiveEndpoint := endpoint
+				if !isResponsesCompactVariantEndpoint(endpoint) {
+					effectiveEndpoint = provider.GetEffectiveEndpoint(endpoint)
+				}
 
 				release, acquired := prs.concurrencyManager.TryAcquire(
 					providerConcurrencyKey(kind, provider.Name),
