@@ -225,6 +225,9 @@ func TestResponsesCompactStripsStoreAndStream(t *testing.T) {
 		if r.URL.Path != "/v1/responses/compact" {
 			t.Errorf("期望转发路径 /v1/responses/compact，收到 %s", r.URL.Path)
 		}
+		if accept := r.Header.Get("Accept"); accept != "application/json" {
+			t.Fatalf("compact 应强制 Accept=application/json，收到 %q", accept)
+		}
 
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -280,6 +283,7 @@ func TestResponsesCompactStripsStoreAndStream(t *testing.T) {
 	body := strings.NewReader(`{"model":"gpt-5.3-codex","input":[{"role":"user","content":"hello"}],"store":true,"stream":true}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", body)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)

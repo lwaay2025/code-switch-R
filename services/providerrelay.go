@@ -832,7 +832,10 @@ func (prs *ProviderRelayService) forwardRequest(
 		headers[headerName] = provider.APIKey
 	}
 
-	if _, ok := headers["Accept"]; !ok {
+	// responses/compact 是一个专用子端点：强制使用 JSON 语义，避免客户端携带 SSE Accept 导致上游返回非预期格式
+	if isResponsesCompactVariantEndpoint(endpoint) {
+		headers["Accept"] = "application/json"
+	} else if _, ok := headers["Accept"]; !ok {
 		headers["Accept"] = "application/json"
 	}
 
