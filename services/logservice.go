@@ -18,6 +18,12 @@ import (
 const timeLayout = "2006-01-02 15:04:05"
 const dayLayout = "2006-01-02"
 
+// request_log.created_at is populated by SQLite CURRENT_TIMESTAMP, which is UTC.
+// Convert local query boundaries to the same storage timezone before coarse filtering.
+func storageTimestamp(t time.Time) string {
+	return t.UTC().Format(timeLayout)
+}
+
 type LogService struct {
 	pricing           *modelpricing.Service
 	appSettings       *AppSettingsService
@@ -104,13 +110,13 @@ func (ls *LogService) RunRetentionCleanup() (int64, error) {
 	}
 
 	normalizeLogRetentionSettings(&settings)
-	cutoffDate := time.Now().In(time.Local).AddDate(0, 0, -settings.LogRetentionDays).Format(dayLayout)
+	cutoffStart := startOfDay(time.Now().In(time.Local).AddDate(0, 0, -settings.LogRetentionDays))
 	db, err := xdb.DB("default")
 	if err != nil {
 		return 0, err
 	}
 
-	result, err := db.Exec(`DELETE FROM request_log WHERE substr(created_at, 1, 10) < ?`, cutoffDate)
+	result, err := db.Exec(`DELETE FROM request_log WHERE created_at < ?`, storageTimestamp(cutoffStart))
 	if err != nil {
 		if strings.Contains(err.Error(), "no such table") {
 			return 0, nil
@@ -209,7 +215,7 @@ func (ls *LogService) ListRequestLogsOnDate(platform string, provider string, da
 	model := xdb.New("request_log")
 	options := []xdb.Option{
 		xdb.OrderByDesc("id"),
-		xdb.WhereGte("created_at", dayStart.Format(timeLayout)),
+		xdb.WhereGte("created_at", storageTimestamp(dayStart)),
 	}
 	if platform != "" {
 		options = append(options, xdb.WhereEq("platform", platform))
@@ -265,7 +271,7 @@ func (ls *LogService) ListProvidersOnDate(platform string, date string) ([]strin
 	options := []xdb.Option{
 		xdb.Field("provider", "created_at"),
 		xdb.WhereNotEq("provider", ""),
-		xdb.WhereGte("created_at", dayStart.Format(timeLayout)),
+		xdb.WhereGte("created_at", storageTimestamp(dayStart)),
 		xdb.OrderByAsc("provider"),
 	}
 	if platform != "" {
@@ -313,7 +319,7 @@ func (ls *LogService) HeatmapStats(days int) ([]HeatmapStat, error) {
 	}
 	model := xdb.New("request_log")
 	options := []xdb.Option{
-		xdb.WhereGe("created_at", rangeStart.Format(timeLayout)),
+		xdb.WhereGe("created_at", storageTimestamp(rangeStart)),
 		xdb.Field(
 			"model",
 			"input_tokens",
@@ -394,7 +400,7 @@ func (ls *LogService) StatsSince(platform string) (LogStats, error) {
 	queryStart := seriesStart.Add(-24 * time.Hour)
 	summaryStart := seriesStart
 	options := []xdb.Option{
-		xdb.WhereGte("created_at", queryStart.Format(timeLayout)),
+		xdb.WhereGte("created_at", storageTimestamp(queryStart)),
 		xdb.Field(
 			"model",
 			"input_tokens",
@@ -510,7 +516,7 @@ func (ls *LogService) ProviderDailyStats(platform string) ([]ProviderDailyStat, 
 	queryStart := start.Add(-24 * time.Hour)
 	model := xdb.New("request_log")
 	options := []xdb.Option{
-		xdb.WhereGte("created_at", queryStart.Format(timeLayout)),
+		xdb.WhereGte("created_at", storageTimestamp(queryStart)),
 		xdb.Field(
 			"provider",
 			"model",
@@ -613,7 +619,7 @@ func (ls *LogService) StatsOnDate(platform string, date string) (LogStats, error
 
 	model := xdb.New("request_log")
 	options := []xdb.Option{
-		xdb.WhereGte("created_at", dayStart.Format(timeLayout)),
+		xdb.WhereGte("created_at", storageTimestamp(dayStart)),
 		xdb.Field(
 			"model",
 			"input_tokens",
@@ -719,7 +725,7 @@ func (ls *LogService) ProviderDailyStatsOnDate(platform string, date string) ([]
 
 	model := xdb.New("request_log")
 	options := []xdb.Option{
-		xdb.WhereGte("created_at", dayStart.Format(timeLayout)),
+		xdb.WhereGte("created_at", storageTimestamp(dayStart)),
 		xdb.Field(
 			"provider",
 			"model",

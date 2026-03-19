@@ -194,12 +194,14 @@ const toDateInput = (date: Date) => {
   const day = `${date.getDate()}`.padStart(2, '0')
   return `${year}-${month}-${day}`
 }
+const currentLocalDateInput = () => toDateInput(new Date())
 
 const filters = reactive<{ platform: LogPlatform | ''; provider: string; date: string }>({
   platform: '',
   provider: '',
-  date: toDateInput(new Date()),
+  date: currentLocalDateInput(),
 })
+const followToday = ref(true)
 const page = ref(1)
 const PAGE_SIZE = 15
 const providerOptions = ref<string[]>([])
@@ -390,7 +392,7 @@ const startCountdown = () => {
   timer = window.setInterval(() => {
     if (countdown.value <= 1) {
       countdown.value = REFRESH_INTERVAL
-      void loadDashboard()
+      void refreshDashboard()
     } else {
       countdown.value -= 1
     }
@@ -438,6 +440,26 @@ const loadDashboard = async () => {
   await Promise.all([loadLogs(), loadStats()])
 }
 
+const syncTodayFilterIfNeeded = async () => {
+  if (!followToday.value) {
+    return
+  }
+
+  const today = currentLocalDateInput()
+  if (filters.date === today) {
+    return
+  }
+
+  filters.date = today
+  page.value = 1
+  await loadProviderOptions()
+}
+
+const refreshDashboard = async () => {
+  await syncTodayFilterIfNeeded()
+  await loadDashboard()
+}
+
 const pagedLogs = computed(() => {
   const start = (page.value - 1) * PAGE_SIZE
   return logs.value.slice(start, start + PAGE_SIZE)
@@ -446,18 +468,20 @@ const pagedLogs = computed(() => {
 const totalPages = computed(() => Math.max(1, Math.ceil(logs.value.length / PAGE_SIZE)))
 
 const applyFilters = async () => {
+  followToday.value = !filters.date || filters.date === currentLocalDateInput()
   page.value = 1
+  await loadProviderOptions()
   await loadDashboard()
   resetTimer()
 }
 
 const refreshLogs = () => {
-  void loadDashboard()
+  void refreshDashboard()
 }
 
 const manualRefresh = () => {
   resetTimer()
-  void loadDashboard()
+  void refreshDashboard()
 }
 
 const nextPage = () => {
@@ -593,8 +617,15 @@ watch(
   },
 )
 
+watch(
+  () => filters.date,
+  (date) => {
+    followToday.value = !date || date === currentLocalDateInput()
+  },
+)
+
 onMounted(async () => {
-  await Promise.all([loadDashboard(), loadProviderOptions()])
+  await Promise.all([refreshDashboard(), loadProviderOptions()])
   startCountdown()
 })
 
