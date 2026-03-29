@@ -846,6 +846,7 @@ func (prs *ProviderRelayService) forwardRequest(
 		if rewriteErr != nil {
 			return false, fmt.Errorf("rewrite codex response chain request: %w", rewriteErr), false
 		}
+		logCodexResponseChainRewrite(endpoint, responseChainPlan, bodyBytes)
 		delete(headers, codexResponseChainSessionHeader)
 	}
 
@@ -987,6 +988,14 @@ func (prs *ProviderRelayService) forwardRequest(
 			}
 			parseNonStreamTokenUsage(kind, body, requestLog)
 			if requestLog.OutputTokens == 0 && !isResponsesCompactVariantEndpoint(endpoint) {
+				if kind == "codex" && isUsableCodexResponseBody(body) {
+					persistCodexResponseChain(responseChainPlan, extractCodexResponseID(body))
+					_, copyErr := resp.ToHttpResponseWriter(c.Writer)
+					if copyErr != nil {
+						fmt.Printf("[WARN] 复制响应到客户端失败（不影响provider成功判定）: %v\n", copyErr)
+					}
+					return true, nil, true
+				}
 				return false, errTokenZero, false
 			}
 			if kind == "codex" {
@@ -1013,6 +1022,10 @@ func (prs *ProviderRelayService) forwardRequest(
 			return true, nil, true
 		}
 		if requestLog.OutputTokens == 0 && !isResponsesCompactVariantEndpoint(endpoint) {
+			if kind == "codex" && chainCapture != nil && chainCapture.IsUsableSuccess() {
+				persistCodexResponseChain(responseChainPlan, chainCapture.GetResponseID())
+				return true, nil, true
+			}
 			return false, errTokenZero, true
 		}
 		if kind == "codex" {

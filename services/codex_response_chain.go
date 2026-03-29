@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +48,8 @@ type codexResponseChainPlan struct {
 type codexResponseChainCapture struct {
 	mu         sync.Mutex
 	ResponseID string
+	HasOutput  bool
+	Completed  bool
 }
 
 var globalCodexResponseChainStore = newCodexResponseChainStore()
@@ -67,7 +70,7 @@ func prepareCodexResponseChain(provider Provider, endpoint string, headers map[s
 		return body, codexResponseChainPlan{}, nil
 	}
 
-	sessionKey := resolveCodexResponseChainSessionKey(headers)
+	sessionKey := resolveCodexResponseChainSessionKey(headers, body)
 	namespace := codexResponseChainNamespace(provider, sessionKey)
 	if sessionKey == "" || namespace == "" {
 		return body, codexResponseChainPlan{}, nil
@@ -179,9 +182,20 @@ func isCodexResponseChainEligibleEndpoint(endpoint string) bool {
 	return strings.Contains(trimmed, "/responses") && !strings.Contains(trimmed, "/responses/compact")
 }
 
-func resolveCodexResponseChainSessionKey(headers map[string]string) string {
-	for _, name := range []string{codexResponseChainSessionHeader, "Conversation_id", "Session_id"} {
+func resolveCodexResponseChainSessionKey(headers map[string]string, body []byte) string {
+	for _, name := range []string{
+		codexResponseChainSessionHeader,
+		"Conversation_id",
+		"Session_id",
+		"session_id",
+		"session-id",
+	} {
 		if key := getHeaderValueFold(headers, name); key != "" {
+			return key
+		}
+	}
+	for _, path := range []string{"prompt_cache_key", "session_id", "sessionId", "conversation_id", "conversationId"} {
+		if key := strings.TrimSpace(gjson.GetBytes(body, path).String()); key != "" {
 			return key
 		}
 	}
@@ -301,7 +315,11 @@ func buildCodexResponseChainInputSuffix(previousCanonical string, currentRaw jso
 				return nil, false
 			}
 		}
-		suffix, err := json.Marshal(curr[len(prev):])
+		suffixItems := trimCodexResponseChainReplayItems(curr[len(prev):])
+		if len(suffixItems) == 0 {
+			return nil, false
+		}
+		suffix, err := json.Marshal(suffixItems)
 		if err != nil {
 			return nil, false
 		}
@@ -309,6 +327,52 @@ func buildCodexResponseChainInputSuffix(previousCanonical string, currentRaw jso
 	default:
 		return nil, false
 	}
+}
+
+func trimCodexResponseChainReplayItems(items []any) []any {
+	if len(items) == 0 {
+		return items
+	}
+
+	start := 0
+	for start < len(items) && isCodexResponseChainReplayOnlyItem(items[start]) {
+		start++
+	}
+	return items[start:]
+}
+
+func isCodexResponseChainReplayOnlyItem(item any) bool {
+	obj, ok := item.(map[string]any)
+	if !ok {
+		return false
+	}
+
+	role := strings.ToLower(strings.TrimSpace(stringValue(obj["role"])))
+	if role == "assistant" {
+		return true
+	}
+	if role == "user" || role == "tool" {
+		return false
+	}
+
+	itemType := strings.ToLower(strings.TrimSpace(stringValue(obj["type"])))
+	switch itemType {
+	case "":
+		return false
+	case "message":
+		return role == "assistant"
+	case "function_call_output", "computer_call_output", "tool_result":
+		return false
+	case "function_call", "custom_tool_call", "computer_call", "code_interpreter_call", "web_search_call", "image_generation_call", "mcp_call", "reasoning":
+		return true
+	default:
+		return false
+	}
+}
+
+func stringValue(value any) string {
+	text, _ := value.(string)
+	return text
 }
 
 func codexResponseChainModelsCompatible(previousModel, currentModel string) bool {
@@ -344,19 +408,25 @@ func (c *codexResponseChainCapture) ObservePayload(payload string) {
 		if eventType != "" && eventType != "response.created" && !strings.HasPrefix(eventType, "response.") {
 			continue
 		}
+		hasOutput := codexResponsePayloadHasOutput([]byte(data))
+		completed := strings.EqualFold(eventType, "response.completed") ||
+			strings.EqualFold(strings.TrimSpace(gjson.Get(data, "response.status").String()), "completed") ||
+			strings.EqualFold(strings.TrimSpace(gjson.Get(data, "status").String()), "completed")
 		responseID := strings.TrimSpace(gjson.Get(data, "response.id").String())
 		if responseID == "" {
 			responseID = strings.TrimSpace(gjson.Get(data, "id").String())
 		}
-		if responseID == "" {
-			continue
-		}
 		c.mu.Lock()
-		if c.ResponseID == "" {
+		if c.ResponseID == "" && responseID != "" {
 			c.ResponseID = responseID
 		}
+		if hasOutput {
+			c.HasOutput = true
+		}
+		if completed {
+			c.Completed = true
+		}
 		c.mu.Unlock()
-		return
 	}
 }
 
@@ -367,6 +437,15 @@ func (c *codexResponseChainCapture) GetResponseID() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.ResponseID
+}
+
+func (c *codexResponseChainCapture) IsUsableSuccess() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.ResponseID != "" && (c.HasOutput || c.Completed)
 }
 
 func persistCodexResponseChain(plan codexResponseChainPlan, responseID string) {
@@ -513,4 +592,87 @@ func getHeaderValueFold(headers map[string]string, name string) string {
 		}
 	}
 	return ""
+}
+
+func codexResponsePayloadHasOutput(body []byte) bool {
+	for _, path := range []string{
+		"output",
+		"response.output",
+		"output_text",
+		"response.output_text",
+	} {
+		result := gjson.GetBytes(body, path)
+		if !result.Exists() {
+			continue
+		}
+		switch result.Type {
+		case gjson.String:
+			if strings.TrimSpace(result.String()) != "" {
+				return true
+			}
+		case gjson.JSON:
+			if len(result.Array()) > 0 {
+				return true
+			}
+			if strings.TrimSpace(result.Raw) != "" && result.Raw != "[]" && result.Raw != "{}" {
+				return true
+			}
+		default:
+			if strings.TrimSpace(result.Raw) != "" {
+				return true
+			}
+		}
+	}
+
+	for _, path := range []string{
+		"output.0.content.0.text",
+		"response.output.0.content.0.text",
+		"output.0.content",
+		"response.output.0.content",
+	} {
+		if strings.TrimSpace(gjson.GetBytes(body, path).String()) != "" {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isUsableCodexResponseBody(body []byte) bool {
+	responseID := extractCodexResponseID(body)
+	if responseID == "" {
+		return false
+	}
+	if codexResponsePayloadHasOutput(body) {
+		return true
+	}
+
+	for _, path := range []string{"status", "response.status"} {
+		if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, path).String()), "completed") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func logCodexResponseChainRewrite(endpoint string, plan codexResponseChainPlan, body []byte) {
+	if !plan.Active {
+		return
+	}
+	prevID := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String())
+	store := gjson.GetBytes(body, "store").Bool()
+	inputCount := gjson.GetBytes(body, "input.#").Int()
+	instructionsExists := gjson.GetBytes(body, "instructions").Exists()
+	toolsCount := gjson.GetBytes(body, "tools.#").Int()
+	fmt.Printf(
+		"[CodexChain] endpoint=%s session=%s prev=%s store=%t input_count=%d instructions=%t tools=%d\n",
+		endpoint,
+		plan.SessionKey,
+		prevID,
+		store,
+		inputCount,
+		instructionsExists,
+		toolsCount,
+	)
 }

@@ -488,6 +488,350 @@ func TestCodexResponsesChainRewritesFollowUpRequests(t *testing.T) {
 	}
 }
 
+func TestCodexResponsesChainRewritesStreamingFollowUpRequests(t *testing.T) {
+	isolateHomeDir(t)
+	gin.SetMode(gin.TestMode)
+	globalCodexResponseChainStore.Reset()
+	t.Cleanup(globalCodexResponseChainStore.Reset)
+
+	type seenRequest struct {
+		previousResponseID string
+		store              bool
+		inputCount         int64
+		inputLastContent   string
+		instructions       string
+	}
+	seen := make([]seenRequest, 0, 2)
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("读取上游请求体失败: %v", err)
+		}
+		seen = append(seen, seenRequest{
+			previousResponseID: gjson.GetBytes(bodyBytes, "previous_response_id").String(),
+			store:              gjson.GetBytes(bodyBytes, "store").Bool(),
+			inputCount:         gjson.GetBytes(bodyBytes, "input.#").Int(),
+			inputLastContent:   gjson.GetBytes(bodyBytes, "input.0.content").String(),
+			instructions:       gjson.GetBytes(bodyBytes, "instructions").String(),
+		})
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if len(seen) == 1 {
+			_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_stream_1\"}}\n\n"))
+			_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"READY\"}\n\n"))
+			_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_stream_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":0}}}\n\n"))
+			return
+		}
+		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_stream_2\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"ORANGE-42\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_stream_2\",\"status\":\"completed\",\"usage\":{\"input_tokens\":8,\"output_tokens\":0}}}\n\n"))
+	}))
+	defer upstreamServer.Close()
+
+	providerService := NewProviderService()
+	settingsService := &SettingsService{}
+	blacklistService := NewBlacklistService(settingsService, nil)
+
+	testProvider := Provider{
+		ID:      1,
+		Name:    "TestCodexProvider",
+		APIURL:  upstreamServer.URL,
+		APIKey:  "test-api-key",
+		Enabled: true,
+		Level:   1,
+	}
+
+	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	router := gin.New()
+	relayService.registerRoutes(router)
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.1","stream":true,"instructions":"system","input":[{"role":"user","content":"hello"}]}`))
+	firstReq.Header.Set("Content-Type", "application/json")
+	firstReq.Header.Set("Accept", "text/event-stream")
+	firstReq.Header.Set(codexResponseChainSessionHeader, "stream-chain-1")
+	firstResp := httptest.NewRecorder()
+	router.ServeHTTP(firstResp, firstReq)
+	if firstResp.Code != http.StatusOK {
+		t.Fatalf("首轮流式请求期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, firstResp.Code, firstResp.Body.String())
+	}
+	if !strings.Contains(firstResp.Body.String(), "resp_stream_1") {
+		t.Fatalf("首轮流式响应应包含 resp_stream_1，实际: %s", firstResp.Body.String())
+	}
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.1","stream":true,"input":[{"role":"user","content":"hello"},{"role":"user","content":"world"}]}`))
+	secondReq.Header.Set("Content-Type", "application/json")
+	secondReq.Header.Set("Accept", "text/event-stream")
+	secondReq.Header.Set(codexResponseChainSessionHeader, "stream-chain-1")
+	secondResp := httptest.NewRecorder()
+	router.ServeHTTP(secondResp, secondReq)
+	if secondResp.Code != http.StatusOK {
+		t.Fatalf("第二轮流式请求期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, secondResp.Code, secondResp.Body.String())
+	}
+
+	if len(seen) != 2 {
+		t.Fatalf("上游命中次数 = %d, want 2", len(seen))
+	}
+	if seen[0].previousResponseID != "" {
+		t.Fatalf("首轮流式 previous_response_id = %q, want empty", seen[0].previousResponseID)
+	}
+	if !seen[0].store {
+		t.Fatal("expected first streaming request to force store=true")
+	}
+	if seen[1].previousResponseID != "resp_stream_1" {
+		t.Fatalf("第二轮流式 previous_response_id = %q, want %q", seen[1].previousResponseID, "resp_stream_1")
+	}
+	if seen[1].inputCount != 1 {
+		t.Fatalf("第二轮流式增量 input 条数 = %d, want 1", seen[1].inputCount)
+	}
+	if seen[1].inputLastContent != "world" {
+		t.Fatalf("第二轮流式增量 content = %q, want %q", seen[1].inputLastContent, "world")
+	}
+	if seen[1].instructions != "system" {
+		t.Fatalf("第二轮流式 instructions = %q, want %q", seen[1].instructions, "system")
+	}
+}
+
+func TestCodexResponsesChainUsesPromptCacheKeyForStreamingPiStyleReplay(t *testing.T) {
+	isolateHomeDir(t)
+	gin.SetMode(gin.TestMode)
+	globalCodexResponseChainStore.Reset()
+	t.Cleanup(globalCodexResponseChainStore.Reset)
+
+	type seenRequest struct {
+		previousResponseID string
+		store              bool
+		inputCount         int64
+		inputLastContent   string
+		instructions       string
+		promptCacheKey     string
+	}
+	seen := make([]seenRequest, 0, 2)
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("读取上游请求体失败: %v", err)
+		}
+		seen = append(seen, seenRequest{
+			previousResponseID: gjson.GetBytes(bodyBytes, "previous_response_id").String(),
+			store:              gjson.GetBytes(bodyBytes, "store").Bool(),
+			inputCount:         gjson.GetBytes(bodyBytes, "input.#").Int(),
+			inputLastContent:   gjson.GetBytes(bodyBytes, "input.0.content").String(),
+			instructions:       gjson.GetBytes(bodyBytes, "instructions").String(),
+			promptCacheKey:     gjson.GetBytes(bodyBytes, "prompt_cache_key").String(),
+		})
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if len(seen) == 1 {
+			_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_pi_1\"}}\n\n"))
+			_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"READY\"}\n\n"))
+			_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_pi_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":0}}}\n\n"))
+			return
+		}
+		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_pi_2\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"ORANGE-42\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_pi_2\",\"status\":\"completed\",\"usage\":{\"input_tokens\":8,\"output_tokens\":0}}}\n\n"))
+	}))
+	defer upstreamServer.Close()
+
+	providerService := NewProviderService()
+	settingsService := &SettingsService{}
+	blacklistService := NewBlacklistService(settingsService, nil)
+
+	testProvider := Provider{
+		ID:      1,
+		Name:    "TestCodexProvider",
+		APIURL:  upstreamServer.URL,
+		APIKey:  "test-api-key",
+		Enabled: true,
+		Level:   1,
+	}
+
+	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	router := gin.New()
+	relayService.registerRoutes(router)
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.1","stream":true,"store":false,"prompt_cache_key":"pi-session-1","instructions":"system","input":[{"role":"user","content":"hello"}]}`))
+	firstReq.Header.Set("Content-Type", "application/json")
+	firstReq.Header.Set("Accept", "text/event-stream")
+	firstResp := httptest.NewRecorder()
+	router.ServeHTTP(firstResp, firstReq)
+	if firstResp.Code != http.StatusOK {
+		t.Fatalf("首轮 PI 风格流式请求期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, firstResp.Code, firstResp.Body.String())
+	}
+	if got := firstResp.Header().Get(codexResponseChainSessionHeader); got != "pi-session-1" {
+		t.Fatalf("首轮响应头 session key = %q, want %q", got, "pi-session-1")
+	}
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.1","stream":true,"store":false,"prompt_cache_key":"pi-session-1","input":[{"role":"user","content":"hello"},{"role":"user","content":"world"}]}`))
+	secondReq.Header.Set("Content-Type", "application/json")
+	secondReq.Header.Set("Accept", "text/event-stream")
+	secondResp := httptest.NewRecorder()
+	router.ServeHTTP(secondResp, secondReq)
+	if secondResp.Code != http.StatusOK {
+		t.Fatalf("第二轮 PI 风格流式请求期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, secondResp.Code, secondResp.Body.String())
+	}
+
+	if len(seen) != 2 {
+		t.Fatalf("上游命中次数 = %d, want 2", len(seen))
+	}
+	if seen[0].previousResponseID != "" {
+		t.Fatalf("首轮 previous_response_id = %q, want empty", seen[0].previousResponseID)
+	}
+	if !seen[0].store {
+		t.Fatal("expected first PI-style streaming request to force store=true")
+	}
+	if seen[0].promptCacheKey != "pi-session-1" {
+		t.Fatalf("首轮 prompt_cache_key = %q, want %q", seen[0].promptCacheKey, "pi-session-1")
+	}
+	if seen[1].previousResponseID != "resp_pi_1" {
+		t.Fatalf("第二轮 previous_response_id = %q, want %q", seen[1].previousResponseID, "resp_pi_1")
+	}
+	if !seen[1].store {
+		t.Fatal("expected second PI-style streaming request to keep store=true")
+	}
+	if seen[1].inputCount != 1 {
+		t.Fatalf("第二轮增量 input 条数 = %d, want 1", seen[1].inputCount)
+	}
+	if seen[1].inputLastContent != "world" {
+		t.Fatalf("第二轮增量 content = %q, want %q", seen[1].inputLastContent, "world")
+	}
+	if seen[1].instructions != "system" {
+		t.Fatalf("第二轮 instructions = %q, want %q", seen[1].instructions, "system")
+	}
+	if seen[1].promptCacheKey != "pi-session-1" {
+		t.Fatalf("第二轮 prompt_cache_key = %q, want %q", seen[1].promptCacheKey, "pi-session-1")
+	}
+}
+
+func TestCodexResponsesChainTrimsReplayOnlyAssistantItemsForPiToolLoop(t *testing.T) {
+	isolateHomeDir(t)
+	gin.SetMode(gin.TestMode)
+	globalCodexResponseChainStore.Reset()
+	t.Cleanup(globalCodexResponseChainStore.Reset)
+
+	type seenRequest struct {
+		previousResponseID string
+		store              bool
+		inputCount         int64
+		firstInputType     string
+		firstInputRole     string
+		firstCallID        string
+	}
+	seen := make([]seenRequest, 0, 2)
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("读取上游请求体失败: %v", err)
+		}
+		seen = append(seen, seenRequest{
+			previousResponseID: gjson.GetBytes(bodyBytes, "previous_response_id").String(),
+			store:              gjson.GetBytes(bodyBytes, "store").Bool(),
+			inputCount:         gjson.GetBytes(bodyBytes, "input.#").Int(),
+			firstInputType:     gjson.GetBytes(bodyBytes, "input.0.type").String(),
+			firstInputRole:     gjson.GetBytes(bodyBytes, "input.0.role").String(),
+			firstCallID:        gjson.GetBytes(bodyBytes, "input.0.call_id").String(),
+		})
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if len(seen) == 1 {
+			_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_pi_tool_1\"}}\n\n"))
+			_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"CALL_TOOL\"}\n\n"))
+			_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_pi_tool_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":0}}}\n\n"))
+			return
+		}
+		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_pi_tool_2\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"DONE\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_pi_tool_2\",\"status\":\"completed\",\"usage\":{\"input_tokens\":8,\"output_tokens\":0}}}\n\n"))
+	}))
+	defer upstreamServer.Close()
+
+	providerService := NewProviderService()
+	settingsService := &SettingsService{}
+	blacklistService := NewBlacklistService(settingsService, nil)
+
+	testProvider := Provider{
+		ID:      1,
+		Name:    "TestCodexProvider",
+		APIURL:  upstreamServer.URL,
+		APIKey:  "test-api-key",
+		Enabled: true,
+		Level:   1,
+	}
+
+	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	router := gin.New()
+	relayService.registerRoutes(router)
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.1","stream":true,"store":false,"input":[{"role":"user","content":"look up weather"}]}`))
+	firstReq.Header.Set("Content-Type", "application/json")
+	firstReq.Header.Set("Accept", "text/event-stream")
+	firstReq.Header.Set("session_id", "pi-tool-loop-2")
+	firstResp := httptest.NewRecorder()
+	router.ServeHTTP(firstResp, firstReq)
+	if firstResp.Code != http.StatusOK {
+		t.Fatalf("首轮 PI tool loop 请求期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, firstResp.Code, firstResp.Body.String())
+	}
+	if got := firstResp.Header().Get(codexResponseChainSessionHeader); got != "pi-tool-loop-2" {
+		t.Fatalf("首轮响应头 session key = %q, want %q", got, "pi-tool-loop-2")
+	}
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.1","stream":true,"store":false,"input":[{"role":"user","content":"look up weather"},{"role":"assistant","type":"message","id":"msg_old","content":[{"type":"output_text","text":"Calling weather tool"}]},{"type":"function_call_output","call_id":"call_weather_1","output":"{\"temp\":21}"}]}`))
+	secondReq.Header.Set("Content-Type", "application/json")
+	secondReq.Header.Set("Accept", "text/event-stream")
+	secondReq.Header.Set("session_id", "pi-tool-loop-2")
+	secondResp := httptest.NewRecorder()
+	router.ServeHTTP(secondResp, secondReq)
+	if secondResp.Code != http.StatusOK {
+		t.Fatalf("第二轮 PI tool loop 请求期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, secondResp.Code, secondResp.Body.String())
+	}
+
+	if len(seen) != 2 {
+		t.Fatalf("上游命中次数 = %d, want 2", len(seen))
+	}
+	if seen[0].previousResponseID != "" {
+		t.Fatalf("首轮 previous_response_id = %q, want empty", seen[0].previousResponseID)
+	}
+	if !seen[0].store {
+		t.Fatal("expected first PI tool loop request to force store=true")
+	}
+	if seen[0].inputCount != 1 || seen[0].firstInputRole != "user" {
+		t.Fatalf("首轮 input 应保留 user 消息，got count=%d role=%q", seen[0].inputCount, seen[0].firstInputRole)
+	}
+	if seen[1].previousResponseID != "resp_pi_tool_1" {
+		t.Fatalf("第二轮 previous_response_id = %q, want %q", seen[1].previousResponseID, "resp_pi_tool_1")
+	}
+	if !seen[1].store {
+		t.Fatal("expected second PI tool loop request to keep store=true")
+	}
+	if seen[1].inputCount != 1 {
+		t.Fatalf("第二轮 input 条数 = %d, want 1", seen[1].inputCount)
+	}
+	if seen[1].firstInputType != "function_call_output" {
+		t.Fatalf("第二轮转发的 input[0].type = %q, want %q", seen[1].firstInputType, "function_call_output")
+	}
+	if seen[1].firstCallID != "call_weather_1" {
+		t.Fatalf("第二轮转发的 call_id = %q, want %q", seen[1].firstCallID, "call_weather_1")
+	}
+}
+
 func TestPrefixedCodexRouteTargetsProviderByName(t *testing.T) {
 	isolateHomeDir(t)
 	gin.SetMode(gin.TestMode)
