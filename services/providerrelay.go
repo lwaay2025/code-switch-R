@@ -839,6 +839,16 @@ func (prs *ProviderRelayService) forwardRequest(
 		headers["Accept"] = "application/json"
 	}
 
+	responseChainPlan := codexResponseChainPlan{}
+	if kind == "codex" {
+		var rewriteErr error
+		bodyBytes, responseChainPlan, rewriteErr = prepareCodexResponseChain(provider, endpoint, headers, bodyBytes)
+		if rewriteErr != nil {
+			return false, fmt.Errorf("rewrite codex response chain request: %w", rewriteErr), false
+		}
+		delete(headers, codexResponseChainSessionHeader)
+	}
+
 	promptCachePlan := codexPromptCachePlan{}
 	if kind == "codex" {
 		bodyBytes, headers, promptCachePlan = applyCodexPromptCache(provider, endpoint, headers, bodyBytes)
@@ -972,9 +982,15 @@ func (prs *ProviderRelayService) forwardRequest(
 		// 非流式：先读完 body 解析 token，再决定是否写回客户端（允许 token=0 时降级到下一个 provider）
 		if !isStream {
 			body := resp.Bytes()
+			if responseChainPlan.Active && responseChainPlan.SessionKey != "" {
+				c.Writer.Header().Set(codexResponseChainSessionHeader, responseChainPlan.SessionKey)
+			}
 			parseNonStreamTokenUsage(kind, body, requestLog)
 			if requestLog.OutputTokens == 0 && !isResponsesCompactVariantEndpoint(endpoint) {
 				return false, errTokenZero, false
+			}
+			if kind == "codex" {
+				persistCodexResponseChain(responseChainPlan, extractCodexResponseID(body))
 			}
 			_, copyErr := resp.ToHttpResponseWriter(c.Writer)
 			if copyErr != nil {
@@ -984,13 +1000,23 @@ func (prs *ProviderRelayService) forwardRequest(
 		}
 
 		// 流式：先转发，再根据解析出的 token 判断是否失败（但响应已写入，不能降级）
-		_, copyErr := resp.ToHttpResponseWriter(c.Writer, ReqeustLogHook(c, kind, requestLog))
+		var chainCapture *codexResponseChainCapture
+		if kind == "codex" && responseChainPlan.Active {
+			chainCapture = &codexResponseChainCapture{}
+			if responseChainPlan.SessionKey != "" {
+				c.Writer.Header().Set(codexResponseChainSessionHeader, responseChainPlan.SessionKey)
+			}
+		}
+		_, copyErr := resp.ToHttpResponseWriter(c.Writer, ReqeustLogHook(c, kind, requestLog, chainCapture))
 		if copyErr != nil {
 			fmt.Printf("[WARN] 复制响应到客户端失败（不影响provider成功判定）: %v\n", copyErr)
 			return true, nil, true
 		}
 		if requestLog.OutputTokens == 0 && !isResponsesCompactVariantEndpoint(endpoint) {
 			return false, errTokenZero, true
+		}
+		if kind == "codex" {
+			persistCodexResponseChain(responseChainPlan, chainCapture.GetResponseID())
 		}
 		return true, nil, true
 	}
@@ -1143,7 +1169,7 @@ func ensureRequestLogTableWithDB(db *sql.DB) error {
 	return nil
 }
 
-func ReqeustLogHook(c *gin.Context, kind string, usage *ReqeustLog) func(data []byte) (bool, []byte) { // SSE 钩子：累计字节和解析 token 用量
+func ReqeustLogHook(c *gin.Context, kind string, usage *ReqeustLog, chainCapture *codexResponseChainCapture) func(data []byte) (bool, []byte) { // SSE 钩子：累计字节和解析 token 用量
 	return func(data []byte) (bool, []byte) {
 		payload := strings.TrimSpace(string(data))
 
@@ -1155,6 +1181,9 @@ func ReqeustLogHook(c *gin.Context, kind string, usage *ReqeustLog) func(data []
 			parserFn = GeminiParseTokenUsageFromResponse
 		}
 		parseEventPayload(payload, parserFn, usage)
+		if kind == "codex" && chainCapture != nil {
+			chainCapture.ObservePayload(payload)
+		}
 
 		return true, data
 	}

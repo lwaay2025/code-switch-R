@@ -377,6 +377,117 @@ func TestCodexPromptCacheEnabledInjectsStableKeyAndHeaders(t *testing.T) {
 	}
 }
 
+func TestCodexResponsesChainRewritesFollowUpRequests(t *testing.T) {
+	isolateHomeDir(t)
+	gin.SetMode(gin.TestMode)
+	globalCodexResponseChainStore.Reset()
+	t.Cleanup(globalCodexResponseChainStore.Reset)
+
+	type seenRequest struct {
+		previousResponseID string
+		store              bool
+		inputCount         int64
+		inputLastContent   string
+		instructions       string
+		toolsCount         int64
+	}
+	seen := make([]seenRequest, 0, 2)
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("读取上游请求体失败: %v", err)
+		}
+		seen = append(seen, seenRequest{
+			previousResponseID: gjson.GetBytes(bodyBytes, "previous_response_id").String(),
+			store:              gjson.GetBytes(bodyBytes, "store").Bool(),
+			inputCount:         gjson.GetBytes(bodyBytes, "input.#").Int(),
+			inputLastContent:   gjson.GetBytes(bodyBytes, "input.0.content").String(),
+			instructions:       gjson.GetBytes(bodyBytes, "instructions").String(),
+			toolsCount:         gjson.GetBytes(bodyBytes, "tools.#").Int(),
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if len(seen) == 1 {
+			_, _ = w.Write([]byte(`{"id":"resp_1","object":"response","usage":{"input_tokens":12,"output_tokens":3}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"resp_2","object":"response","usage":{"input_tokens":8,"output_tokens":2}}`))
+	}))
+	defer upstreamServer.Close()
+
+	providerService := NewProviderService()
+	settingsService := &SettingsService{}
+	blacklistService := NewBlacklistService(settingsService, nil)
+
+	testProvider := Provider{
+		ID:      1,
+		Name:    "TestCodexProvider",
+		APIURL:  upstreamServer.URL,
+		APIKey:  "test-api-key",
+		Enabled: true,
+		Level:   1,
+	}
+
+	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	router := gin.New()
+	relayService.registerRoutes(router)
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.1","input":[{"role":"user","content":"hello"}],"instructions":"system","tools":[{"type":"function","name":"tool_a"}]}`))
+	firstReq.Header.Set("Content-Type", "application/json")
+	firstReq.Header.Set(codexResponseChainSessionHeader, "session-chain-1")
+	firstResp := httptest.NewRecorder()
+	router.ServeHTTP(firstResp, firstReq)
+	if firstResp.Code != http.StatusOK {
+		t.Fatalf("首轮请求期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, firstResp.Code, firstResp.Body.String())
+	}
+	if got := firstResp.Header().Get(codexResponseChainSessionHeader); got != "session-chain-1" {
+		t.Fatalf("首轮响应头 session key = %q, want %q", got, "session-chain-1")
+	}
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.1","input":[{"role":"user","content":"hello"},{"role":"user","content":"world"}]}`))
+	secondReq.Header.Set("Content-Type", "application/json")
+	secondReq.Header.Set(codexResponseChainSessionHeader, "session-chain-1")
+	secondResp := httptest.NewRecorder()
+	router.ServeHTTP(secondResp, secondReq)
+	if secondResp.Code != http.StatusOK {
+		t.Fatalf("第二轮请求期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, secondResp.Code, secondResp.Body.String())
+	}
+
+	if len(seen) != 2 {
+		t.Fatalf("上游命中次数 = %d, want 2", len(seen))
+	}
+	if seen[0].previousResponseID != "" {
+		t.Fatalf("首轮 previous_response_id = %q, want empty", seen[0].previousResponseID)
+	}
+	if !seen[0].store {
+		t.Fatal("expected first request to force store=true")
+	}
+	if seen[1].previousResponseID != "resp_1" {
+		t.Fatalf("第二轮 previous_response_id = %q, want %q", seen[1].previousResponseID, "resp_1")
+	}
+	if !seen[1].store {
+		t.Fatal("expected second request to keep store=true")
+	}
+	if seen[1].inputCount != 1 {
+		t.Fatalf("第二轮增量 input 条数 = %d, want 1", seen[1].inputCount)
+	}
+	if seen[1].inputLastContent != "world" {
+		t.Fatalf("第二轮增量 content = %q, want %q", seen[1].inputLastContent, "world")
+	}
+	if seen[1].instructions != "system" {
+		t.Fatalf("第二轮 instructions = %q, want %q", seen[1].instructions, "system")
+	}
+	if seen[1].toolsCount != 1 {
+		t.Fatalf("第二轮 tools 数量 = %d, want 1", seen[1].toolsCount)
+	}
+}
+
 func TestPrefixedCodexRouteTargetsProviderByName(t *testing.T) {
 	isolateHomeDir(t)
 	gin.SetMode(gin.TestMode)
