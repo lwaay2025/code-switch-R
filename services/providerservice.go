@@ -49,6 +49,9 @@ type Provider struct {
 	// 最大并发请求数（可选）：0 表示不限制
 	MaxConcurrentRequests int `json:"maxConcurrentRequests,omitempty"`
 
+	// Codex Prompt Cache 开关：开启后按原仓策略为 Responses 请求注入或复用 prompt_cache_key，并同步会话头。
+	CodexPromptCacheEnabled bool `json:"codexPromptCacheEnabled,omitempty"`
+
 	// ========== 可用性监控字段（新增 v0.5.0） ==========
 
 	// 可用性监控开关 - 在可用性页面配置
@@ -445,7 +448,7 @@ func (ps *ProviderService) DuplicateProvider(kind string, sourceID int64) (*Prov
 
 // IsModelSupported 检查 provider 是否支持指定的模型
 // 支持条件：1) 模型在 SupportedModels 中（精确或通配符匹配）
-//          2) 模型在 ModelMapping 的 key 中（精确或通配符匹配）
+//  2. 模型在 ModelMapping 的 key 中（精确或通配符匹配）
 func (p *Provider) IsModelSupported(modelName string) bool {
 	// 向后兼容：如果未配置白名单和映射，假设支持所有模型
 	if (p.SupportedModels == nil || len(p.SupportedModels) == 0) &&
@@ -600,7 +603,8 @@ func matchWildcard(pattern, text string) bool {
 // applyWildcardMapping 应用通配符映射
 // 将 pattern 中的 * 匹配部分替换到 replacement 的 * 位置
 // 示例: pattern="claude-*", replacement="anthropic/claude-*", input="claude-sonnet-4"
-//      输出: "anthropic/claude-sonnet-4"
+//
+//	输出: "anthropic/claude-sonnet-4"
 func applyWildcardMapping(pattern, replacement, input string) string {
 	// 如果 pattern 或 replacement 没有通配符，直接返回 replacement
 	if !strings.Contains(pattern, "*") || !strings.Contains(replacement, "*") {

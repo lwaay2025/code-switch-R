@@ -13,6 +13,10 @@ export type RequestLog = {
   cache_create_tokens: number
   cache_read_tokens: number
   reasoning_tokens: number
+  codex_prompt_cache_enabled?: boolean
+  codex_prompt_cache_eligible?: boolean
+  codex_prompt_cache_hit?: boolean
+  codex_prompt_cache_matchable?: boolean
   is_stream?: boolean | number
   duration_sec?: number
   created_at: string
@@ -73,11 +77,22 @@ export type LogStats = {
   reasoning_tokens: number
   cache_create_tokens: number
   cache_read_tokens: number
+  duration_samples?: number
+  duration_avg_sec?: number
+  duration_p95_sec?: number
+  duration_p99_sec?: number
+  slow_requests?: number
+  slow_rate?: number
   cost_total: number
   cost_input: number
   cost_output: number
   cost_cache_create: number
   cost_cache_read: number
+  codex_prompt_cache_enabled_requests?: number
+  codex_prompt_cache_eligible_requests?: number
+  codex_prompt_cache_matchable_requests?: number
+  codex_prompt_cache_hit_requests?: number
+  codex_prompt_cache_hit_rate?: number
   series: LogStatsSeries[]
 }
 
@@ -100,7 +115,18 @@ export type ProviderDailyStat = {
   reasoning_tokens: number
   cache_create_tokens: number
   cache_read_tokens: number
+  duration_samples?: number
+  duration_avg_sec?: number
+  duration_p95_sec?: number
+  duration_p99_sec?: number
+  slow_requests?: number
+  slow_rate?: number
   cost_total: number
+  codex_prompt_cache_enabled_requests?: number
+  codex_prompt_cache_eligible_requests?: number
+  codex_prompt_cache_matchable_requests?: number
+  codex_prompt_cache_hit_requests?: number
+  codex_prompt_cache_hit_rate?: number
 }
 
 export const fetchProviderDailyStats = async (

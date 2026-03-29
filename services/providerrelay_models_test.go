@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 func isolateHomeDir(t *testing.T) {
@@ -293,6 +294,86 @@ func TestResponsesCompactStripsStoreAndStream(t *testing.T) {
 	}
 	if !upstreamHit {
 		t.Fatal("期望命中 Codex 转发流程并请求上游，但实际上未命中")
+	}
+}
+
+func TestCodexPromptCacheEnabledInjectsStableKeyAndHeaders(t *testing.T) {
+	isolateHomeDir(t)
+	gin.SetMode(gin.TestMode)
+
+	type seenRequest struct {
+		bodyKey        string
+		conversationID string
+		sessionID      string
+	}
+	seen := make([]seenRequest, 0, 2)
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("读取上游请求体失败: %v", err)
+		}
+		seen = append(seen, seenRequest{
+			bodyKey:        gjson.GetBytes(bodyBytes, "prompt_cache_key").String(),
+			conversationID: r.Header.Get("Conversation_id"),
+			sessionID:      r.Header.Get("Session_id"),
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"resp_cache","object":"response","usage":{"input_tokens":12,"output_tokens":3}}`))
+	}))
+	defer upstreamServer.Close()
+
+	providerService := NewProviderService()
+	settingsService := &SettingsService{}
+	blacklistService := NewBlacklistService(settingsService, nil)
+
+	testProvider := Provider{
+		ID:                      1,
+		Name:                    "TestCodexProvider",
+		APIURL:                  upstreamServer.URL,
+		APIKey:                  "test-api-key",
+		Enabled:                 true,
+		Level:                   1,
+		CodexPromptCacheEnabled: true,
+	}
+
+	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	router := gin.New()
+	relayService.registerRoutes(router)
+
+	for i := 0; i < 2; i++ {
+		body := strings.NewReader(`{"model":"gpt-5.1","input":"hello"}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/responses", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("第 %d 次请求期望状态码 %d，收到 %d，响应体: %s", i+1, http.StatusOK, w.Code, w.Body.String())
+		}
+	}
+
+	if len(seen) != 2 {
+		t.Fatalf("上游命中次数 = %d, want 2", len(seen))
+	}
+	first := seen[0]
+	second := seen[1]
+	if first.bodyKey == "" {
+		t.Fatal("expected first forwarded request to contain prompt_cache_key")
+	}
+	if first.bodyKey != first.conversationID || first.bodyKey != first.sessionID {
+		t.Fatal("expected first forwarded request to mirror prompt_cache_key to Conversation_id/Session_id")
+	}
+	if second.bodyKey != first.bodyKey {
+		t.Fatalf("second prompt_cache_key = %q, want %q", second.bodyKey, first.bodyKey)
+	}
+	if second.conversationID != first.bodyKey || second.sessionID != first.bodyKey {
+		t.Fatal("expected second forwarded request to reuse the same cache headers")
 	}
 }
 

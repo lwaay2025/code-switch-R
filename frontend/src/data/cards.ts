@@ -16,6 +16,8 @@ export type AutomationCard = {
   level?: number
   // 单供应商最大并发请求数：0 表示不限制
   maxConcurrentRequests?: number
+  // Codex Prompt Cache：为 Responses 请求注入稳定 cache key
+  codexPromptCacheEnabled?: boolean
   // API 端点路径（可选）：覆盖平台默认端点
   apiEndpoint?: string
   // CLI 配置：存储供应商关联的 CLI 可编辑配置

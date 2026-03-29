@@ -424,6 +424,24 @@
                   <span>{{ stats.tokens }}</span>
                   <span class="card-metric-separator" aria-hidden="true">·</span>
                   <span>{{ stats.cost }}</span>
+                  <template v-if="stats.latencyLabel">
+                    <span class="card-metric-separator" aria-hidden="true">·</span>
+                    <span
+                      class="card-success-rate"
+                      :class="stats.latencyClass"
+                    >
+                      {{ stats.latencyLabel }}
+                    </span>
+                  </template>
+                  <template v-if="stats.cacheRateLabel">
+                    <span class="card-metric-separator" aria-hidden="true">·</span>
+                    <span
+                      class="card-success-rate"
+                      :class="stats.cacheRateClass"
+                    >
+                      {{ stats.cacheRateLabel }}
+                    </span>
+                  </template>
                 </template>
               </p>
               <!-- 黑名单横幅 -->
@@ -727,6 +745,20 @@
                   />
                   <span class="field-hint">{{ t('components.main.form.hints.maxConcurrentRequests') }}</span>
                 </label>
+
+                <div v-if="modalState.tabId === 'codex'" class="form-field switch-field">
+                  <span>{{ t('components.main.form.labels.codexPromptCacheEnabled') }}</span>
+                  <div class="switch-inline">
+                    <label class="mac-switch">
+                      <input type="checkbox" v-model="modalState.form.codexPromptCacheEnabled" />
+                      <span></span>
+                    </label>
+                    <span class="switch-text">
+                      {{ modalState.form.codexPromptCacheEnabled ? t('components.main.form.switch.on') : t('components.main.form.switch.off') }}
+                    </span>
+                  </div>
+                  <span class="field-hint">{{ t('components.main.form.hints.codexPromptCacheEnabled') }}</span>
+                </div>
 
                 <div class="form-field">
                   <ModelWhitelistEditor v-model="modalState.form.supportedModels" />
@@ -1575,6 +1607,7 @@ const serializeProviders = (providers: AutomationCard[]) =>
   providers.map((provider) => ({
     ...provider,
     maxConcurrentRequests: normalizeMaxConcurrentRequests(provider.maxConcurrentRequests),
+    codexPromptCacheEnabled: !!provider.codexPromptCacheEnabled,
     // 确保可用性配置正确序列化
     availabilityMonitorEnabled: !!provider.availabilityMonitorEnabled,
     connectivityAutoBlacklist: !!provider.connectivityAutoBlacklist,
@@ -2067,6 +2100,10 @@ type ProviderStatDisplay =
       cost: string
       successRateLabel: string
       successRateClass: string
+      latencyLabel: string
+      latencyClass: string
+      cacheRateLabel: string
+      cacheRateClass: string
     }
 
 const SUCCESS_RATE_THRESHOLDS = {
@@ -2080,12 +2117,54 @@ const formatSuccessRateLabel = (value: number) => {
   return `${t('components.main.providers.successRate')}: ${percent.toFixed(decimals)}%`
 }
 
+const formatCacheHitRateLabel = (hit: number, matchable: number, rate: number) => {
+  const percent = clamp(rate, 0, 1) * 100
+  const decimals = percent >= 99.5 || percent === 0 ? 0 : 1
+  return t('components.main.providers.cacheHitRate', {
+    rate: percent.toFixed(decimals),
+    hit: formatMetric(hit),
+    matchable: formatMetric(matchable),
+  })
+}
+
+const formatLatencyMetric = (value: number) => {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '—'
+  }
+  if (value < 1) {
+    return `${Math.round(value * 1000)}ms`
+  }
+  if (value >= 10) {
+    return `${value.toFixed(1)}s`
+  }
+  return `${value.toFixed(2)}s`
+}
+
+const formatLatencyLabel = (avg: number, p95: number) =>
+  t('components.main.providers.latency', {
+    avg: formatLatencyMetric(avg),
+    p95: formatLatencyMetric(p95),
+  })
+
 const successRateClassName = (value: number) => {
   const rate = clamp(value, 0, 1)
   if (rate >= SUCCESS_RATE_THRESHOLDS.healthy) {
     return 'success-good'
   }
   if (rate >= SUCCESS_RATE_THRESHOLDS.warning) {
+    return 'success-warn'
+  }
+  return 'success-bad'
+}
+
+const latencyClassName = (value: number) => {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 'success-warn'
+  }
+  if (value < 2) {
+    return 'success-good'
+  }
+  if (value < 5) {
     return 'success-warn'
   }
   return 'success-bad'
@@ -2104,6 +2183,37 @@ const providerStatDisplay = (providerName: string): ProviderStatDisplay => {
   const successRateValue = Number.isFinite(stat.success_rate) ? clamp(stat.success_rate, 0, 1) : null
   const successRateLabel = successRateValue !== null ? formatSuccessRateLabel(successRateValue) : ''
   const successRateClass = successRateValue !== null ? successRateClassName(successRateValue) : ''
+  const durationSamples = Math.max(Number(stat.duration_samples ?? 0), 0)
+  const avgLatency = Number(stat.duration_avg_sec ?? NaN)
+  const p95Latency = Number(stat.duration_p95_sec ?? NaN)
+  const latencyLabel =
+    durationSamples > 0 && Number.isFinite(avgLatency) && Number.isFinite(p95Latency)
+      ? formatLatencyLabel(avgLatency, p95Latency)
+      : ''
+  const latencyClass =
+    durationSamples > 0 && Number.isFinite(p95Latency)
+      ? latencyClassName(p95Latency)
+      : 'success-warn'
+  const enabledRequests = Math.max(Number(stat.codex_prompt_cache_enabled_requests ?? 0), 0)
+  const matchableRequests = Math.max(Number(stat.codex_prompt_cache_matchable_requests ?? 0), 0)
+  const hitRequests = Math.max(Number(stat.codex_prompt_cache_hit_requests ?? 0), 0)
+  const cacheRateValue =
+    matchableRequests > 0
+      ? clamp(
+          Number.isFinite(stat.codex_prompt_cache_hit_rate ?? NaN)
+            ? Number(stat.codex_prompt_cache_hit_rate)
+            : hitRequests / matchableRequests,
+          0,
+          1,
+        )
+      : null
+  const cacheRateLabel =
+    tab === 'codex' && enabledRequests > 0
+      ? cacheRateValue !== null
+        ? formatCacheHitRateLabel(hitRequests, matchableRequests, cacheRateValue)
+        : t('components.main.providers.cacheHitRatePending')
+      : ''
+  const cacheRateClass = cacheRateValue !== null ? successRateClassName(cacheRateValue) : 'success-warn'
   return {
     state: 'ready',
     requests: `${t('components.main.providers.requests')}: ${formatMetric(stat.total_requests)}`,
@@ -2111,6 +2221,10 @@ const providerStatDisplay = (providerName: string): ProviderStatDisplay => {
     cost: `${t('components.main.providers.cost')}: ${currencyFormatter.value.format(Math.max(stat.cost_total, 0))}`,
     successRateLabel,
     successRateClass,
+    latencyLabel,
+    latencyClass,
+    cacheRateLabel,
+    cacheRateClass,
   }
 }
 
@@ -2500,6 +2614,7 @@ type VendorForm = {
   modelMapping?: Record<string, string>
   level?: number
   maxConcurrentRequests?: string
+  codexPromptCacheEnabled?: boolean
   apiEndpoint?: string
   cliConfig?: Record<string, any>
   // === 可用性监控配置（新） ===
@@ -2532,6 +2647,7 @@ const defaultFormValues = (platform?: string): VendorForm => ({
   icon: defaultIconKey,
   level: 1,
   maxConcurrentRequests: '0',
+  codexPromptCacheEnabled: false,
   enabled: true,
   supportedModels: {},
   modelMapping: {},
@@ -2644,6 +2760,7 @@ const openEditModal = (card: AutomationCard) => {
     icon: card.icon,
     level: card.level || 1,
     maxConcurrentRequests: String(card.maxConcurrentRequests ?? 0),
+    codexPromptCacheEnabled: !!card.codexPromptCacheEnabled,
     enabled: card.enabled,
     supportedModels: card.supportedModels || {},
     modelMapping: card.modelMapping || {},
@@ -2724,6 +2841,7 @@ const submitModal = async () => {
       icon,
       level: nextLevel,
       maxConcurrentRequests: normalizeMaxConcurrentRequests(modalState.form.maxConcurrentRequests),
+      codexPromptCacheEnabled: !!modalState.form.codexPromptCacheEnabled,
       enabled: modalState.form.enabled,
       supportedModels: modalState.form.supportedModels || {},
       modelMapping: modalState.form.modelMapping || {},
@@ -2761,6 +2879,7 @@ const submitModal = async () => {
       tint: 'rgba(15, 23, 42, 0.12)',
       level: normalizeLevel(modalState.form.level),
       maxConcurrentRequests: normalizeMaxConcurrentRequests(modalState.form.maxConcurrentRequests),
+      codexPromptCacheEnabled: !!modalState.form.codexPromptCacheEnabled,
       enabled: modalState.form.enabled,
       supportedModels: modalState.form.supportedModels || {},
       modelMapping: modalState.form.modelMapping || {},

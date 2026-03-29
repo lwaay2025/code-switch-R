@@ -155,23 +155,33 @@ func (ls *LogService) ListRequestLogs(platform string, provider string, limit in
 	logs := make([]ReqeustLog, 0, len(records))
 	for _, record := range records {
 		logEntry := ReqeustLog{
-			ID:                record.GetInt64("id"),
-			Platform:          record.GetString("platform"),
-			Model:             record.GetString("model"),
-			Provider:          record.GetString("provider"),
-			HttpCode:          record.GetInt("http_code"),
-			InputTokens:       record.GetInt("input_tokens"),
-			OutputTokens:      record.GetInt("output_tokens"),
-			CacheCreateTokens: record.GetInt("cache_create_tokens"),
-			CacheReadTokens:   record.GetInt("cache_read_tokens"),
-			ReasoningTokens:   record.GetInt("reasoning_tokens"),
-			CreatedAt:         record.GetString("created_at"),
-			IsStream:          record.GetBool("is_stream"),
-			DurationSec:       record.GetFloat64("duration_sec"),
+			ID:                          record.GetInt64("id"),
+			Platform:                    record.GetString("platform"),
+			Model:                       record.GetString("model"),
+			Provider:                    record.GetString("provider"),
+			HttpCode:                    record.GetInt("http_code"),
+			InputTokens:                 record.GetInt("input_tokens"),
+			OutputTokens:                record.GetInt("output_tokens"),
+			CacheCreateTokens:           record.GetInt("cache_create_tokens"),
+			CacheReadTokens:             record.GetInt("cache_read_tokens"),
+			ReasoningTokens:             record.GetInt("reasoning_tokens"),
+			CreatedAt:                   record.GetString("created_at"),
+			IsStream:                    record.GetBool("is_stream"),
+			DurationSec:                 record.GetFloat64("duration_sec"),
+			CodexPromptCacheEnabled:     record.GetBool("codex_prompt_cache_enabled"),
+			CodexPromptCacheEligible:    record.GetBool("codex_prompt_cache_eligible"),
+			CodexPromptCacheHit:         record.GetBool("codex_prompt_cache_hit"),
+			codexPromptCacheBucket:      record.GetString("codex_prompt_cache_bucket"),
+			codexPromptCacheFingerprint: record.GetString("codex_prompt_cache_fingerprint"),
+			codexPromptCacheInScope:     true,
+		}
+		if !logEntry.CodexPromptCacheHit && logEntry.CacheReadTokens > 0 {
+			logEntry.CodexPromptCacheHit = true
 		}
 		ls.decorateCost(&logEntry)
 		logs = append(logs, logEntry)
 	}
+	annotateCodexPromptCacheLogs(logs)
 	return logs, nil
 }
 
@@ -215,7 +225,7 @@ func (ls *LogService) ListRequestLogsOnDate(platform string, provider string, da
 	model := xdb.New("request_log")
 	options := []xdb.Option{
 		xdb.OrderByDesc("id"),
-		xdb.WhereGte("created_at", storageTimestamp(dayStart)),
+		xdb.WhereGte("created_at", storageTimestamp(dayStart.Add(-24*time.Hour))),
 	}
 	if platform != "" {
 		options = append(options, xdb.WhereEq("platform", platform))
@@ -231,34 +241,50 @@ func (ls *LogService) ListRequestLogsOnDate(platform string, provider string, da
 		return nil, err
 	}
 
-	logs := make([]ReqeustLog, 0, min(limit, len(records)))
+	logs := make([]ReqeustLog, 0, len(records))
 	for _, record := range records {
-		if _, _, inRange := normalizeRecordTime(record, dayStart, dayEnd); !inRange {
-			continue
-		}
+		_, _, inRange := normalizeRecordTime(record, dayStart, dayEnd)
 		logEntry := ReqeustLog{
-			ID:                record.GetInt64("id"),
-			Platform:          record.GetString("platform"),
-			Model:             record.GetString("model"),
-			Provider:          record.GetString("provider"),
-			HttpCode:          record.GetInt("http_code"),
-			InputTokens:       record.GetInt("input_tokens"),
-			OutputTokens:      record.GetInt("output_tokens"),
-			CacheCreateTokens: record.GetInt("cache_create_tokens"),
-			CacheReadTokens:   record.GetInt("cache_read_tokens"),
-			ReasoningTokens:   record.GetInt("reasoning_tokens"),
-			CreatedAt:         record.GetString("created_at"),
-			IsStream:          record.GetBool("is_stream"),
-			DurationSec:       record.GetFloat64("duration_sec"),
+			ID:                          record.GetInt64("id"),
+			Platform:                    record.GetString("platform"),
+			Model:                       record.GetString("model"),
+			Provider:                    record.GetString("provider"),
+			HttpCode:                    record.GetInt("http_code"),
+			InputTokens:                 record.GetInt("input_tokens"),
+			OutputTokens:                record.GetInt("output_tokens"),
+			CacheCreateTokens:           record.GetInt("cache_create_tokens"),
+			CacheReadTokens:             record.GetInt("cache_read_tokens"),
+			ReasoningTokens:             record.GetInt("reasoning_tokens"),
+			CreatedAt:                   record.GetString("created_at"),
+			IsStream:                    record.GetBool("is_stream"),
+			DurationSec:                 record.GetFloat64("duration_sec"),
+			CodexPromptCacheEnabled:     record.GetBool("codex_prompt_cache_enabled"),
+			CodexPromptCacheEligible:    record.GetBool("codex_prompt_cache_eligible"),
+			CodexPromptCacheHit:         record.GetBool("codex_prompt_cache_hit"),
+			codexPromptCacheBucket:      record.GetString("codex_prompt_cache_bucket"),
+			codexPromptCacheFingerprint: record.GetString("codex_prompt_cache_fingerprint"),
+			codexPromptCacheInScope:     inRange,
+		}
+		if !logEntry.CodexPromptCacheHit && logEntry.CacheReadTokens > 0 {
+			logEntry.CodexPromptCacheHit = true
 		}
 		ls.decorateCost(&logEntry)
 		logs = append(logs, logEntry)
-		if len(logs) >= limit {
+	}
+	annotateCodexPromptCacheLogs(logs)
+
+	filtered := make([]ReqeustLog, 0, min(limit, len(logs)))
+	for _, logEntry := range logs {
+		if !logEntry.codexPromptCacheInScope {
+			continue
+		}
+		filtered = append(filtered, logEntry)
+		if len(filtered) >= limit {
 			break
 		}
 	}
 
-	return logs, nil
+	return filtered, nil
 }
 
 func (ls *LogService) ListProvidersOnDate(platform string, date string) ([]string, error) {
@@ -402,12 +428,21 @@ func (ls *LogService) StatsSince(platform string) (LogStats, error) {
 	options := []xdb.Option{
 		xdb.WhereGte("created_at", storageTimestamp(queryStart)),
 		xdb.Field(
+			"id",
+			"platform",
 			"model",
+			"http_code",
 			"input_tokens",
 			"output_tokens",
 			"reasoning_tokens",
 			"cache_create_tokens",
 			"cache_read_tokens",
+			"duration_sec",
+			"codex_prompt_cache_enabled",
+			"codex_prompt_cache_eligible",
+			"codex_prompt_cache_hit",
+			"codex_prompt_cache_bucket",
+			"codex_prompt_cache_fingerprint",
 			"created_at",
 		),
 		xdb.OrderByAsc("created_at"),
@@ -431,10 +466,34 @@ func (ls *LogService) StatsSince(platform string) (LogStats, error) {
 		}
 	}
 
+	analysisLogs := make([]ReqeustLog, 0, len(records))
+	durationAcc := &durationAccumulator{}
+
 	for _, record := range records {
 		createdAt, hasTime := parseCreatedAt(record)
 		dayKey := dayFromTimestamp(record.GetString("created_at"))
 		isToday := dayKey == seriesStart.Format("2006-01-02")
+		inSummary := false
+		if hasTime {
+			inSummary = !createdAt.Before(summaryStart) && createdAt.Before(seriesEnd)
+		} else {
+			inSummary = isToday
+		}
+		output := record.GetInt("output_tokens")
+		cacheRead := record.GetInt("cache_read_tokens")
+		analysisLogs = append(analysisLogs, ReqeustLog{
+			ID:                          record.GetInt64("id"),
+			Platform:                    record.GetString("platform"),
+			HttpCode:                    record.GetInt("http_code"),
+			OutputTokens:                output,
+			CacheReadTokens:             cacheRead,
+			CodexPromptCacheEnabled:     record.GetBool("codex_prompt_cache_enabled"),
+			CodexPromptCacheEligible:    record.GetBool("codex_prompt_cache_eligible"),
+			CodexPromptCacheHit:         record.GetBool("codex_prompt_cache_hit") || cacheRead > 0,
+			codexPromptCacheBucket:      record.GetString("codex_prompt_cache_bucket"),
+			codexPromptCacheFingerprint: record.GetString("codex_prompt_cache_fingerprint"),
+			codexPromptCacheInScope:     inSummary,
+		})
 
 		if hasTime {
 			if createdAt.Before(seriesStart) || !createdAt.Before(seriesEnd) {
@@ -459,10 +518,9 @@ func (ls *LogService) StatsSince(platform string) (LogStats, error) {
 		}
 		bucket := seriesBuckets[bucketIndex]
 		input := record.GetInt("input_tokens")
-		output := record.GetInt("output_tokens")
 		reasoning := record.GetInt("reasoning_tokens")
 		cacheCreate := record.GetInt("cache_create_tokens")
-		cacheRead := record.GetInt("cache_read_tokens")
+		durationSec := record.GetFloat64("duration_sec")
 		usage := modelpricing.UsageSnapshot{
 			InputTokens:       input,
 			OutputTokens:      output,
@@ -494,7 +552,18 @@ func (ls *LogService) StatsSince(platform string) (LogStats, error) {
 		stats.CostCacheCreate += cost.CacheCreateCost
 		stats.CostCacheRead += cost.CacheReadCost
 		stats.CostTotal += cost.TotalCost
+		durationAcc.Add(durationSec)
 	}
+
+	cacheStats := annotateCodexPromptCacheLogs(analysisLogs)
+	stats.CodexPromptCacheEnabledRequests = cacheStats.EnabledRequests
+	stats.CodexPromptCacheEligibleRequests = cacheStats.EligibleRequests
+	stats.CodexPromptCacheMatchableRequests = cacheStats.MatchableRequests
+	stats.CodexPromptCacheHitRequests = cacheStats.HitRequests
+	if cacheStats.MatchableRequests > 0 {
+		stats.CodexPromptCacheHitRate = float64(cacheStats.HitRequests) / float64(cacheStats.MatchableRequests)
+	}
+	applyDurationStatsToLogStats(&stats, durationAcc)
 
 	for i := 0; i < seriesHours; i++ {
 		if bucket := seriesBuckets[i]; bucket != nil {
@@ -518,7 +587,9 @@ func (ls *LogService) ProviderDailyStats(platform string) ([]ProviderDailyStat, 
 	options := []xdb.Option{
 		xdb.WhereGte("created_at", storageTimestamp(queryStart)),
 		xdb.Field(
+			"id",
 			"provider",
+			"platform",
 			"model",
 			"http_code",
 			"input_tokens",
@@ -526,8 +597,15 @@ func (ls *LogService) ProviderDailyStats(platform string) ([]ProviderDailyStat, 
 			"reasoning_tokens",
 			"cache_create_tokens",
 			"cache_read_tokens",
+			"duration_sec",
+			"codex_prompt_cache_enabled",
+			"codex_prompt_cache_eligible",
+			"codex_prompt_cache_hit",
+			"codex_prompt_cache_bucket",
+			"codex_prompt_cache_fingerprint",
 			"created_at",
 		),
+		xdb.OrderByAsc("created_at"),
 	}
 	if platform != "" {
 		options = append(options, xdb.WhereEq("platform", platform))
@@ -540,22 +618,31 @@ func (ls *LogService) ProviderDailyStats(platform string) ([]ProviderDailyStat, 
 		return nil, err
 	}
 	statMap := map[string]*ProviderDailyStat{}
+	analysisLogs := make([]ReqeustLog, 0, len(records))
+	durationMap := map[string]*durationAccumulator{}
 	for _, record := range records {
-		provider := strings.TrimSpace(record.GetString("provider"))
-		if provider == "" {
-			provider = "(unknown)"
+		provider := providerNameForStats(record.GetString("provider"))
+		_, _, inRange := normalizeRecordTime(record, start, end)
+		output := record.GetInt("output_tokens")
+		cacheRead := record.GetInt("cache_read_tokens")
+		analysisLogs = append(analysisLogs, ReqeustLog{
+			ID:                          record.GetInt64("id"),
+			Platform:                    record.GetString("platform"),
+			Provider:                    provider,
+			HttpCode:                    record.GetInt("http_code"),
+			OutputTokens:                output,
+			CacheReadTokens:             cacheRead,
+			CodexPromptCacheEnabled:     record.GetBool("codex_prompt_cache_enabled"),
+			CodexPromptCacheEligible:    record.GetBool("codex_prompt_cache_eligible"),
+			CodexPromptCacheHit:         record.GetBool("codex_prompt_cache_hit") || cacheRead > 0,
+			codexPromptCacheBucket:      record.GetString("codex_prompt_cache_bucket"),
+			codexPromptCacheFingerprint: record.GetString("codex_prompt_cache_fingerprint"),
+			codexPromptCacheInScope:     inRange,
+		})
+		if !inRange {
+			continue
 		}
-		createdAt, hasTime := parseCreatedAt(record)
-		if hasTime {
-			if createdAt.Before(start) || !createdAt.Before(end) {
-				continue
-			}
-		} else {
-			dayKey := dayFromTimestamp(record.GetString("created_at"))
-			if dayKey != start.Format("2006-01-02") {
-				continue
-			}
-		}
+
 		stat := statMap[provider]
 		if stat == nil {
 			stat = &ProviderDailyStat{Provider: provider}
@@ -563,10 +650,9 @@ func (ls *LogService) ProviderDailyStats(platform string) ([]ProviderDailyStat, 
 		}
 		httpCode := record.GetInt("http_code")
 		input := record.GetInt("input_tokens")
-		output := record.GetInt("output_tokens")
 		reasoning := record.GetInt("reasoning_tokens")
 		cacheCreate := record.GetInt("cache_create_tokens")
-		cacheRead := record.GetInt("cache_read_tokens")
+		durationSec := record.GetFloat64("duration_sec")
 		usage := modelpricing.UsageSnapshot{
 			InputTokens:       input,
 			OutputTokens:      output,
@@ -588,12 +674,23 @@ func (ls *LogService) ProviderDailyStats(platform string) ([]ProviderDailyStat, 
 		stat.CacheCreateTokens += int64(cacheCreate)
 		stat.CacheReadTokens += int64(cacheRead)
 		stat.CostTotal += cost.TotalCost
+		durationAcc := durationMap[provider]
+		if durationAcc == nil {
+			durationAcc = &durationAccumulator{}
+			durationMap[provider] = durationAcc
+		}
+		durationAcc.Add(durationSec)
 	}
+	applyProviderCodexPromptCacheStats(analysisLogs, statMap)
 	stats := make([]ProviderDailyStat, 0, len(statMap))
 	for _, stat := range statMap {
 		if stat.TotalRequests > 0 {
 			stat.SuccessRate = float64(stat.SuccessfulRequests) / float64(stat.TotalRequests)
 		}
+		if stat.CodexPromptCacheMatchableRequests > 0 {
+			stat.CodexPromptCacheHitRate = float64(stat.CodexPromptCacheHitRequests) / float64(stat.CodexPromptCacheMatchableRequests)
+		}
+		applyDurationStatsToProviderStat(stat, durationMap[providerNameForStats(stat.Provider)])
 		stats = append(stats, *stat)
 	}
 	sort.Slice(stats, func(i, j int) bool {
@@ -618,15 +715,25 @@ func (ls *LogService) StatsOnDate(platform string, date string) (LogStats, error
 	}
 
 	model := xdb.New("request_log")
+	queryStart := dayStart.Add(-24 * time.Hour)
 	options := []xdb.Option{
-		xdb.WhereGte("created_at", storageTimestamp(dayStart)),
+		xdb.WhereGte("created_at", storageTimestamp(queryStart)),
 		xdb.Field(
+			"id",
+			"platform",
 			"model",
+			"http_code",
 			"input_tokens",
 			"output_tokens",
 			"reasoning_tokens",
 			"cache_create_tokens",
 			"cache_read_tokens",
+			"duration_sec",
+			"codex_prompt_cache_enabled",
+			"codex_prompt_cache_eligible",
+			"codex_prompt_cache_hit",
+			"codex_prompt_cache_bucket",
+			"codex_prompt_cache_fingerprint",
 			"created_at",
 		),
 		xdb.OrderByAsc("created_at"),
@@ -650,8 +757,26 @@ func (ls *LogService) StatsOnDate(platform string, date string) (LogStats, error
 		}
 	}
 
+	analysisLogs := make([]ReqeustLog, 0, len(records))
+	durationAcc := &durationAccumulator{}
+
 	for _, record := range records {
 		createdAt, hasTime, inRange := normalizeRecordTime(record, dayStart, dayEnd)
+		output := record.GetInt("output_tokens")
+		cacheRead := record.GetInt("cache_read_tokens")
+		analysisLogs = append(analysisLogs, ReqeustLog{
+			ID:                          record.GetInt64("id"),
+			Platform:                    record.GetString("platform"),
+			HttpCode:                    record.GetInt("http_code"),
+			OutputTokens:                output,
+			CacheReadTokens:             cacheRead,
+			CodexPromptCacheEnabled:     record.GetBool("codex_prompt_cache_enabled"),
+			CodexPromptCacheEligible:    record.GetBool("codex_prompt_cache_eligible"),
+			CodexPromptCacheHit:         record.GetBool("codex_prompt_cache_hit") || cacheRead > 0,
+			codexPromptCacheBucket:      record.GetString("codex_prompt_cache_bucket"),
+			codexPromptCacheFingerprint: record.GetString("codex_prompt_cache_fingerprint"),
+			codexPromptCacheInScope:     inRange,
+		})
 		if !inRange {
 			continue
 		}
@@ -669,10 +794,9 @@ func (ls *LogService) StatsOnDate(platform string, date string) (LogStats, error
 
 		bucket := seriesBuckets[bucketIndex]
 		input := record.GetInt("input_tokens")
-		output := record.GetInt("output_tokens")
 		reasoning := record.GetInt("reasoning_tokens")
 		cacheCreate := record.GetInt("cache_create_tokens")
-		cacheRead := record.GetInt("cache_read_tokens")
+		durationSec := record.GetFloat64("duration_sec")
 		usage := modelpricing.UsageSnapshot{
 			InputTokens:       input,
 			OutputTokens:      output,
@@ -701,7 +825,18 @@ func (ls *LogService) StatsOnDate(platform string, date string) (LogStats, error
 		stats.CostCacheCreate += cost.CacheCreateCost
 		stats.CostCacheRead += cost.CacheReadCost
 		stats.CostTotal += cost.TotalCost
+		durationAcc.Add(durationSec)
 	}
+
+	cacheStats := annotateCodexPromptCacheLogs(analysisLogs)
+	stats.CodexPromptCacheEnabledRequests = cacheStats.EnabledRequests
+	stats.CodexPromptCacheEligibleRequests = cacheStats.EligibleRequests
+	stats.CodexPromptCacheMatchableRequests = cacheStats.MatchableRequests
+	stats.CodexPromptCacheHitRequests = cacheStats.HitRequests
+	if cacheStats.MatchableRequests > 0 {
+		stats.CodexPromptCacheHitRate = float64(cacheStats.HitRequests) / float64(cacheStats.MatchableRequests)
+	}
+	applyDurationStatsToLogStats(&stats, durationAcc)
 
 	for i := 0; i < seriesHours; i++ {
 		if bucket := seriesBuckets[i]; bucket != nil {
@@ -724,10 +859,13 @@ func (ls *LogService) ProviderDailyStatsOnDate(platform string, date string) ([]
 	}
 
 	model := xdb.New("request_log")
+	queryStart := dayStart.Add(-24 * time.Hour)
 	options := []xdb.Option{
-		xdb.WhereGte("created_at", storageTimestamp(dayStart)),
+		xdb.WhereGte("created_at", storageTimestamp(queryStart)),
 		xdb.Field(
+			"id",
 			"provider",
+			"platform",
 			"model",
 			"http_code",
 			"input_tokens",
@@ -735,6 +873,12 @@ func (ls *LogService) ProviderDailyStatsOnDate(platform string, date string) ([]
 			"reasoning_tokens",
 			"cache_create_tokens",
 			"cache_read_tokens",
+			"duration_sec",
+			"codex_prompt_cache_enabled",
+			"codex_prompt_cache_eligible",
+			"codex_prompt_cache_hit",
+			"codex_prompt_cache_bucket",
+			"codex_prompt_cache_fingerprint",
 			"created_at",
 		),
 		xdb.OrderByAsc("created_at"),
@@ -751,15 +895,29 @@ func (ls *LogService) ProviderDailyStatsOnDate(platform string, date string) ([]
 	}
 
 	statMap := map[string]*ProviderDailyStat{}
+	analysisLogs := make([]ReqeustLog, 0, len(records))
+	durationMap := map[string]*durationAccumulator{}
 	for _, record := range records {
 		_, _, inRange := normalizeRecordTime(record, dayStart, dayEnd)
+		provider := providerNameForStats(record.GetString("provider"))
+		output := record.GetInt("output_tokens")
+		cacheRead := record.GetInt("cache_read_tokens")
+		analysisLogs = append(analysisLogs, ReqeustLog{
+			ID:                          record.GetInt64("id"),
+			Platform:                    record.GetString("platform"),
+			Provider:                    provider,
+			HttpCode:                    record.GetInt("http_code"),
+			OutputTokens:                output,
+			CacheReadTokens:             cacheRead,
+			CodexPromptCacheEnabled:     record.GetBool("codex_prompt_cache_enabled"),
+			CodexPromptCacheEligible:    record.GetBool("codex_prompt_cache_eligible"),
+			CodexPromptCacheHit:         record.GetBool("codex_prompt_cache_hit") || cacheRead > 0,
+			codexPromptCacheBucket:      record.GetString("codex_prompt_cache_bucket"),
+			codexPromptCacheFingerprint: record.GetString("codex_prompt_cache_fingerprint"),
+			codexPromptCacheInScope:     inRange,
+		})
 		if !inRange {
 			continue
-		}
-
-		provider := strings.TrimSpace(record.GetString("provider"))
-		if provider == "" {
-			provider = "(unknown)"
 		}
 
 		stat := statMap[provider]
@@ -770,10 +928,9 @@ func (ls *LogService) ProviderDailyStatsOnDate(platform string, date string) ([]
 
 		httpCode := record.GetInt("http_code")
 		input := record.GetInt("input_tokens")
-		output := record.GetInt("output_tokens")
 		reasoning := record.GetInt("reasoning_tokens")
 		cacheCreate := record.GetInt("cache_create_tokens")
-		cacheRead := record.GetInt("cache_read_tokens")
+		durationSec := record.GetFloat64("duration_sec")
 		usage := modelpricing.UsageSnapshot{
 			InputTokens:       input,
 			OutputTokens:      output,
@@ -795,13 +952,24 @@ func (ls *LogService) ProviderDailyStatsOnDate(platform string, date string) ([]
 		stat.CacheCreateTokens += int64(cacheCreate)
 		stat.CacheReadTokens += int64(cacheRead)
 		stat.CostTotal += cost.TotalCost
+		durationAcc := durationMap[provider]
+		if durationAcc == nil {
+			durationAcc = &durationAccumulator{}
+			durationMap[provider] = durationAcc
+		}
+		durationAcc.Add(durationSec)
 	}
+	applyProviderCodexPromptCacheStats(analysisLogs, statMap)
 
 	stats := make([]ProviderDailyStat, 0, len(statMap))
 	for _, stat := range statMap {
 		if stat.TotalRequests > 0 {
 			stat.SuccessRate = float64(stat.SuccessfulRequests) / float64(stat.TotalRequests)
 		}
+		if stat.CodexPromptCacheMatchableRequests > 0 {
+			stat.CodexPromptCacheHitRate = float64(stat.CodexPromptCacheHitRequests) / float64(stat.CodexPromptCacheMatchableRequests)
+		}
+		applyDurationStatsToProviderStat(stat, durationMap[providerNameForStats(stat.Provider)])
 		stats = append(stats, *stat)
 	}
 	sort.Slice(stats, func(i, j int) bool {
@@ -955,6 +1123,49 @@ func startOfHour(t time.Time) time.Time {
 	return time.Date(y, m, d, t.Hour(), 0, 0, 0, t.Location())
 }
 
+func providerNameForStats(value string) string {
+	provider := strings.TrimSpace(value)
+	if provider == "" {
+		return "(unknown)"
+	}
+	return provider
+}
+
+func applyProviderCodexPromptCacheStats(logs []ReqeustLog, statMap map[string]*ProviderDailyStat) {
+	if len(logs) == 0 || len(statMap) == 0 {
+		return
+	}
+
+	annotateCodexPromptCacheLogs(logs)
+	for _, logEntry := range logs {
+		if !logEntry.codexPromptCacheInScope {
+			continue
+		}
+
+		stat := statMap[providerNameForStats(logEntry.Provider)]
+		if stat == nil {
+			continue
+		}
+
+		if logEntry.CodexPromptCacheEnabled {
+			stat.CodexPromptCacheEnabledRequests++
+		}
+		if !logEntry.CodexPromptCacheEnabled || !logEntry.CodexPromptCacheEligible {
+			continue
+		}
+
+		stat.CodexPromptCacheEligibleRequests++
+		if !logEntry.CodexPromptCacheMatchable {
+			continue
+		}
+
+		stat.CodexPromptCacheMatchableRequests++
+		if logEntry.CodexPromptCacheHit {
+			stat.CodexPromptCacheHitRequests++
+		}
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
@@ -979,32 +1190,54 @@ type HeatmapStat struct {
 }
 
 type LogStats struct {
-	TotalRequests     int64            `json:"total_requests"`
-	InputTokens       int64            `json:"input_tokens"`
-	OutputTokens      int64            `json:"output_tokens"`
-	ReasoningTokens   int64            `json:"reasoning_tokens"`
-	CacheCreateTokens int64            `json:"cache_create_tokens"`
-	CacheReadTokens   int64            `json:"cache_read_tokens"`
-	CostTotal         float64          `json:"cost_total"`
-	CostInput         float64          `json:"cost_input"`
-	CostOutput        float64          `json:"cost_output"`
-	CostCacheCreate   float64          `json:"cost_cache_create"`
-	CostCacheRead     float64          `json:"cost_cache_read"`
-	Series            []LogStatsSeries `json:"series"`
+	TotalRequests                     int64            `json:"total_requests"`
+	InputTokens                       int64            `json:"input_tokens"`
+	OutputTokens                      int64            `json:"output_tokens"`
+	ReasoningTokens                   int64            `json:"reasoning_tokens"`
+	CacheCreateTokens                 int64            `json:"cache_create_tokens"`
+	CacheReadTokens                   int64            `json:"cache_read_tokens"`
+	DurationSamples                   int64            `json:"duration_samples"`
+	DurationAvgSec                    float64          `json:"duration_avg_sec"`
+	DurationP95Sec                    float64          `json:"duration_p95_sec"`
+	DurationP99Sec                    float64          `json:"duration_p99_sec"`
+	SlowRequests                      int64            `json:"slow_requests"`
+	SlowRate                          float64          `json:"slow_rate"`
+	CostTotal                         float64          `json:"cost_total"`
+	CostInput                         float64          `json:"cost_input"`
+	CostOutput                        float64          `json:"cost_output"`
+	CostCacheCreate                   float64          `json:"cost_cache_create"`
+	CostCacheRead                     float64          `json:"cost_cache_read"`
+	CodexPromptCacheEnabledRequests   int64            `json:"codex_prompt_cache_enabled_requests"`
+	CodexPromptCacheEligibleRequests  int64            `json:"codex_prompt_cache_eligible_requests"`
+	CodexPromptCacheMatchableRequests int64            `json:"codex_prompt_cache_matchable_requests"`
+	CodexPromptCacheHitRequests       int64            `json:"codex_prompt_cache_hit_requests"`
+	CodexPromptCacheHitRate           float64          `json:"codex_prompt_cache_hit_rate"`
+	Series                            []LogStatsSeries `json:"series"`
 }
 
 type ProviderDailyStat struct {
-	Provider           string  `json:"provider"`
-	TotalRequests      int64   `json:"total_requests"`
-	SuccessfulRequests int64   `json:"successful_requests"`
-	FailedRequests     int64   `json:"failed_requests"`
-	SuccessRate        float64 `json:"success_rate"`
-	InputTokens        int64   `json:"input_tokens"`
-	OutputTokens       int64   `json:"output_tokens"`
-	ReasoningTokens    int64   `json:"reasoning_tokens"`
-	CacheCreateTokens  int64   `json:"cache_create_tokens"`
-	CacheReadTokens    int64   `json:"cache_read_tokens"`
-	CostTotal          float64 `json:"cost_total"`
+	Provider                          string  `json:"provider"`
+	TotalRequests                     int64   `json:"total_requests"`
+	SuccessfulRequests                int64   `json:"successful_requests"`
+	FailedRequests                    int64   `json:"failed_requests"`
+	SuccessRate                       float64 `json:"success_rate"`
+	InputTokens                       int64   `json:"input_tokens"`
+	OutputTokens                      int64   `json:"output_tokens"`
+	ReasoningTokens                   int64   `json:"reasoning_tokens"`
+	CacheCreateTokens                 int64   `json:"cache_create_tokens"`
+	CacheReadTokens                   int64   `json:"cache_read_tokens"`
+	DurationSamples                   int64   `json:"duration_samples"`
+	DurationAvgSec                    float64 `json:"duration_avg_sec"`
+	DurationP95Sec                    float64 `json:"duration_p95_sec"`
+	DurationP99Sec                    float64 `json:"duration_p99_sec"`
+	SlowRequests                      int64   `json:"slow_requests"`
+	SlowRate                          float64 `json:"slow_rate"`
+	CostTotal                         float64 `json:"cost_total"`
+	CodexPromptCacheEnabledRequests   int64   `json:"codex_prompt_cache_enabled_requests"`
+	CodexPromptCacheEligibleRequests  int64   `json:"codex_prompt_cache_eligible_requests"`
+	CodexPromptCacheMatchableRequests int64   `json:"codex_prompt_cache_matchable_requests"`
+	CodexPromptCacheHitRequests       int64   `json:"codex_prompt_cache_hit_requests"`
+	CodexPromptCacheHitRate           float64 `json:"codex_prompt_cache_hit_rate"`
 }
 
 type LogStatsSeries struct {

@@ -105,6 +105,30 @@
                 <span class="token-label">{{ t('components.logs.tokenLabels.cacheRead') }}</span>
                 <span class="token-value">{{ formatNumber(item.cache_read_tokens) }}</span>
               </div>
+              <div
+                v-if="item.platform === 'codex' && item.codex_prompt_cache_enabled"
+                class="cache-status-row"
+              >
+                <span class="cache-pill cache-pill--enabled">{{ t('components.logs.cacheStatus.enabled') }}</span>
+                <span
+                  v-if="item.codex_prompt_cache_eligible"
+                  class="cache-pill cache-pill--eligible"
+                >
+                  {{ t('components.logs.cacheStatus.eligible') }}
+                </span>
+                <span
+                  v-if="item.codex_prompt_cache_matchable"
+                  class="cache-pill cache-pill--matchable"
+                >
+                  {{ t('components.logs.cacheStatus.matchable') }}
+                </span>
+                <span
+                  v-if="item.codex_prompt_cache_hit"
+                  class="cache-pill cache-pill--hit"
+                >
+                  {{ t('components.logs.cacheStatus.hit') }}
+                </span>
+              </div>
             </td>
           </tr>
           <tr v-if="!pagedLogs.length && !loading">
@@ -518,6 +542,19 @@ const formatDuration = (value?: number) => {
   return `${value.toFixed(2)}s`
 }
 
+const formatDurationMetric = (value?: number) => {
+  if (value === undefined || value === null || Number.isNaN(value) || value <= 0) {
+    return '—'
+  }
+  if (value < 1) {
+    return `${Math.round(value * 1000)}ms`
+  }
+  if (value >= 10) {
+    return `${value.toFixed(1)}s`
+  }
+  return `${value.toFixed(2)}s`
+}
+
 const httpCodeClass = (code: number) => {
   if (code >= 500) return 'http-server-error'
   if (code >= 400) return 'http-client-error'
@@ -551,12 +588,19 @@ const formatCurrency = (value?: number) => {
   return `$${value.toFixed(4)}`
 }
 
+const formatPercent = (value?: number) => {
+  if (value === undefined || value === null || Number.isNaN(value)) {
+    return '—'
+  }
+  return `${(value * 100).toFixed(1)}%`
+}
+
 const statsCards = computed(() => {
   const data = stats.value
   const summaryDate = summaryDateLabel.value
   const totalTokens =
     (data?.input_tokens ?? 0) + (data?.output_tokens ?? 0) + (data?.reasoning_tokens ?? 0)
-  return [
+  const cards = [
     {
       key: 'requests',
       label: t('components.logs.summary.total'),
@@ -568,6 +612,35 @@ const statsCards = computed(() => {
       label: t('components.logs.summary.tokens'),
       hint: t('components.logs.summary.tokenHint'),
       value: data ? formatNumber(totalTokens) : '—',
+    },
+    {
+      key: 'avgLatency',
+      label: t('components.logs.summary.avgLatency'),
+      hint: t('components.logs.summary.avgLatencyHint', {
+        samples: formatNumber(data?.duration_samples ?? 0),
+      }),
+      value: formatDurationMetric(data?.duration_avg_sec),
+    },
+    {
+      key: 'p95Latency',
+      label: t('components.logs.summary.p95Latency'),
+      hint: t('components.logs.summary.p95LatencyHint'),
+      value: formatDurationMetric(data?.duration_p95_sec),
+    },
+    {
+      key: 'p99Latency',
+      label: t('components.logs.summary.p99Latency'),
+      hint: t('components.logs.summary.p99LatencyHint'),
+      value: formatDurationMetric(data?.duration_p99_sec),
+    },
+    {
+      key: 'slowRate',
+      label: t('components.logs.summary.slowRate'),
+      hint: t('components.logs.summary.slowRateHint', {
+        slow: formatNumber(data?.slow_requests ?? 0),
+        threshold: formatDurationMetric(5),
+      }),
+      value: formatPercent(data?.slow_rate),
     },
     {
       key: 'cacheReads',
@@ -582,6 +655,29 @@ const statsCards = computed(() => {
       value: formatCurrency(data?.cost_total ?? 0),
     },
   ]
+  const showCodexPromptCache =
+    filters.platform === 'codex' || (data?.codex_prompt_cache_enabled_requests ?? 0) > 0
+  if (showCodexPromptCache) {
+    cards.splice(3, 0,
+      {
+        key: 'cacheMatchable',
+        label: t('components.logs.summary.codexCacheMatchable'),
+        hint: t('components.logs.summary.codexCacheMatchableHint', {
+          eligible: formatNumber(data?.codex_prompt_cache_eligible_requests ?? 0),
+        }),
+        value: formatNumber(data?.codex_prompt_cache_matchable_requests ?? 0),
+      },
+      {
+        key: 'cacheHitRate',
+        label: t('components.logs.summary.codexCacheHitRate'),
+        hint: t('components.logs.summary.codexCacheHitRateHint', {
+          hit: formatNumber(data?.codex_prompt_cache_hit_requests ?? 0),
+        }),
+        value: formatPercent(data?.codex_prompt_cache_hit_rate ?? 0),
+      },
+    )
+  }
+  return cards
 })
 
 const summaryDateLabel = computed(() => {
@@ -679,6 +775,43 @@ onUnmounted(() => {
   color: #94a3b8;
 }
 
+.cache-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+
+.cache-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.14rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.cache-pill--enabled {
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+}
+
+.cache-pill--eligible {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+}
+
+.cache-pill--matchable {
+  background: rgba(124, 58, 237, 0.12);
+  color: #6d28d9;
+}
+
+.cache-pill--hit {
+  background: rgba(16, 185, 129, 0.15);
+  color: #047857;
+}
+
 html.dark .summary-card {
   border-color: rgba(255, 255, 255, 0.12);
   background: radial-gradient(circle at top, rgba(148, 163, 184, 0.2), rgba(15, 23, 42, 0.35));
@@ -694,6 +827,26 @@ html.dark .summary-card__value {
 
 html.dark .summary-card__hint {
   color: rgba(186, 194, 210, 0.8);
+}
+
+html.dark .cache-pill--enabled {
+  background: rgba(96, 165, 250, 0.2);
+  color: #bfdbfe;
+}
+
+html.dark .cache-pill--eligible {
+  background: rgba(251, 191, 36, 0.16);
+  color: #fde68a;
+}
+
+html.dark .cache-pill--matchable {
+  background: rgba(167, 139, 250, 0.18);
+  color: #ddd6fe;
+}
+
+html.dark .cache-pill--hit {
+  background: rgba(52, 211, 153, 0.16);
+  color: #a7f3d0;
 }
 
 @media (max-width: 768px) {

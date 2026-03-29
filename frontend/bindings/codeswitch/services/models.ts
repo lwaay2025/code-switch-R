@@ -1615,11 +1615,22 @@ export class LogStats {
     "reasoning_tokens": number;
     "cache_create_tokens": number;
     "cache_read_tokens": number;
+    "duration_samples": number;
+    "duration_avg_sec": number;
+    "duration_p95_sec": number;
+    "duration_p99_sec": number;
+    "slow_requests": number;
+    "slow_rate": number;
     "cost_total": number;
     "cost_input": number;
     "cost_output": number;
     "cost_cache_create": number;
     "cost_cache_read": number;
+    "codex_prompt_cache_enabled_requests": number;
+    "codex_prompt_cache_eligible_requests": number;
+    "codex_prompt_cache_matchable_requests": number;
+    "codex_prompt_cache_hit_requests": number;
+    "codex_prompt_cache_hit_rate": number;
     "series": LogStatsSeries[];
 
     /** Creates a new LogStats instance. */
@@ -1642,6 +1653,24 @@ export class LogStats {
         if (!("cache_read_tokens" in $$source)) {
             this["cache_read_tokens"] = 0;
         }
+        if (!("duration_samples" in $$source)) {
+            this["duration_samples"] = 0;
+        }
+        if (!("duration_avg_sec" in $$source)) {
+            this["duration_avg_sec"] = 0;
+        }
+        if (!("duration_p95_sec" in $$source)) {
+            this["duration_p95_sec"] = 0;
+        }
+        if (!("duration_p99_sec" in $$source)) {
+            this["duration_p99_sec"] = 0;
+        }
+        if (!("slow_requests" in $$source)) {
+            this["slow_requests"] = 0;
+        }
+        if (!("slow_rate" in $$source)) {
+            this["slow_rate"] = 0;
+        }
         if (!("cost_total" in $$source)) {
             this["cost_total"] = 0;
         }
@@ -1657,6 +1686,21 @@ export class LogStats {
         if (!("cost_cache_read" in $$source)) {
             this["cost_cache_read"] = 0;
         }
+        if (!("codex_prompt_cache_enabled_requests" in $$source)) {
+            this["codex_prompt_cache_enabled_requests"] = 0;
+        }
+        if (!("codex_prompt_cache_eligible_requests" in $$source)) {
+            this["codex_prompt_cache_eligible_requests"] = 0;
+        }
+        if (!("codex_prompt_cache_matchable_requests" in $$source)) {
+            this["codex_prompt_cache_matchable_requests"] = 0;
+        }
+        if (!("codex_prompt_cache_hit_requests" in $$source)) {
+            this["codex_prompt_cache_hit_requests"] = 0;
+        }
+        if (!("codex_prompt_cache_hit_rate" in $$source)) {
+            this["codex_prompt_cache_hit_rate"] = 0;
+        }
         if (!("series" in $$source)) {
             this["series"] = [];
         }
@@ -1668,10 +1712,10 @@ export class LogStats {
      * Creates a new LogStats instance from a string or object.
      */
     static createFrom($$source: any = {}): LogStats {
-        const $$createField11_0 = $$createType15;
+        const $$createField22_0 = $$createType15;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("series" in $$parsedSource) {
-            $$parsedSource["series"] = $$createField11_0($$parsedSource["series"]);
+            $$parsedSource["series"] = $$createField22_0($$parsedSource["series"]);
         }
         return new LogStats($$parsedSource as Partial<LogStats>);
     }
@@ -1991,6 +2035,11 @@ export class Provider {
     "maxConcurrentRequests"?: number;
 
     /**
+     * Codex Prompt Cache 开关：开启后按原仓策略为 Responses 请求注入或复用 prompt_cache_key，并同步会话头。
+     */
+    "codexPromptCacheEnabled"?: boolean;
+
+    /**
      * 可用性监控开关 - 在可用性页面配置
      * 启用后才会执行后台健康检查
      */
@@ -2068,7 +2117,7 @@ export class Provider {
     static createFrom($$source: any = {}): Provider {
         const $$createField10_0 = $$createType20;
         const $$createField11_0 = $$createType4;
-        const $$createField16_0 = $$createType22;
+        const $$createField17_0 = $$createType22;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("supportedModels" in $$parsedSource) {
             $$parsedSource["supportedModels"] = $$createField10_0($$parsedSource["supportedModels"]);
@@ -2077,7 +2126,7 @@ export class Provider {
             $$parsedSource["modelMapping"] = $$createField11_0($$parsedSource["modelMapping"]);
         }
         if ("availabilityConfig" in $$parsedSource) {
-            $$parsedSource["availabilityConfig"] = $$createField16_0($$parsedSource["availabilityConfig"]);
+            $$parsedSource["availabilityConfig"] = $$createField17_0($$parsedSource["availabilityConfig"]);
         }
         return new Provider($$parsedSource as Partial<Provider>);
     }
@@ -2094,7 +2143,18 @@ export class ProviderDailyStat {
     "reasoning_tokens": number;
     "cache_create_tokens": number;
     "cache_read_tokens": number;
+    "duration_samples": number;
+    "duration_avg_sec": number;
+    "duration_p95_sec": number;
+    "duration_p99_sec": number;
+    "slow_requests": number;
+    "slow_rate": number;
     "cost_total": number;
+    "codex_prompt_cache_enabled_requests": number;
+    "codex_prompt_cache_eligible_requests": number;
+    "codex_prompt_cache_matchable_requests": number;
+    "codex_prompt_cache_hit_requests": number;
+    "codex_prompt_cache_hit_rate": number;
 
     /** Creates a new ProviderDailyStat instance. */
     constructor($$source: Partial<ProviderDailyStat> = {}) {
@@ -2128,8 +2188,41 @@ export class ProviderDailyStat {
         if (!("cache_read_tokens" in $$source)) {
             this["cache_read_tokens"] = 0;
         }
+        if (!("duration_samples" in $$source)) {
+            this["duration_samples"] = 0;
+        }
+        if (!("duration_avg_sec" in $$source)) {
+            this["duration_avg_sec"] = 0;
+        }
+        if (!("duration_p95_sec" in $$source)) {
+            this["duration_p95_sec"] = 0;
+        }
+        if (!("duration_p99_sec" in $$source)) {
+            this["duration_p99_sec"] = 0;
+        }
+        if (!("slow_requests" in $$source)) {
+            this["slow_requests"] = 0;
+        }
+        if (!("slow_rate" in $$source)) {
+            this["slow_rate"] = 0;
+        }
         if (!("cost_total" in $$source)) {
             this["cost_total"] = 0;
+        }
+        if (!("codex_prompt_cache_enabled_requests" in $$source)) {
+            this["codex_prompt_cache_enabled_requests"] = 0;
+        }
+        if (!("codex_prompt_cache_eligible_requests" in $$source)) {
+            this["codex_prompt_cache_eligible_requests"] = 0;
+        }
+        if (!("codex_prompt_cache_matchable_requests" in $$source)) {
+            this["codex_prompt_cache_matchable_requests"] = 0;
+        }
+        if (!("codex_prompt_cache_hit_requests" in $$source)) {
+            this["codex_prompt_cache_hit_requests"] = 0;
+        }
+        if (!("codex_prompt_cache_hit_rate" in $$source)) {
+            this["codex_prompt_cache_hit_rate"] = 0;
         }
 
         Object.assign(this, $$source);
@@ -2293,6 +2386,10 @@ export class ReqeustLog {
     "ephemeral_1h_cost": number;
     "total_cost": number;
     "has_pricing": boolean;
+    "codex_prompt_cache_enabled"?: boolean;
+    "codex_prompt_cache_eligible"?: boolean;
+    "codex_prompt_cache_hit"?: boolean;
+    "codex_prompt_cache_matchable"?: boolean;
 
     /** Creates a new ReqeustLog instance. */
     constructor($$source: Partial<ReqeustLog> = {}) {

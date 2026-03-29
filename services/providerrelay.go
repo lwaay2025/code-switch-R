@@ -839,16 +839,27 @@ func (prs *ProviderRelayService) forwardRequest(
 		headers["Accept"] = "application/json"
 	}
 
+	promptCachePlan := codexPromptCachePlan{}
+	if kind == "codex" {
+		bodyBytes, headers, promptCachePlan = applyCodexPromptCache(provider, endpoint, headers, bodyBytes)
+	}
+
 	requestLog := &ReqeustLog{
-		Platform: kind,
-		Provider: provider.Name,
-		Model:    model,
-		IsStream: isStream,
+		Platform:                    kind,
+		Provider:                    provider.Name,
+		Model:                       model,
+		IsStream:                    isStream,
+		CodexPromptCacheEnabled:     promptCachePlan.Enabled,
+		CodexPromptCacheEligible:    promptCachePlan.Eligible,
+		codexPromptCacheBucket:      promptCachePlan.BucketHash,
+		codexPromptCacheFingerprint: promptCachePlan.Fingerprint,
+		codexPromptCacheInScope:     true,
 	}
 	skipPersist := false
 	start := time.Now()
 	defer func() {
 		requestLog.DurationSec = time.Since(start).Seconds()
+		requestLog.CodexPromptCacheHit = requestLog.CodexPromptCacheEligible && requestLog.CacheReadTokens > 0
 		if skipPersist {
 			return
 		}
@@ -867,8 +878,10 @@ func (prs *ProviderRelayService) forwardRequest(
 			INSERT INTO request_log (
 				platform, model, provider, http_code,
 				input_tokens, output_tokens, cache_create_tokens, cache_read_tokens,
-				reasoning_tokens, is_stream, duration_sec
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				reasoning_tokens, is_stream, duration_sec,
+				codex_prompt_cache_enabled, codex_prompt_cache_eligible, codex_prompt_cache_hit,
+				codex_prompt_cache_bucket, codex_prompt_cache_fingerprint
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			requestLog.Platform,
 			requestLog.Model,
@@ -881,6 +894,11 @@ func (prs *ProviderRelayService) forwardRequest(
 			requestLog.ReasoningTokens,
 			boolToInt(requestLog.IsStream),
 			requestLog.DurationSec,
+			boolToInt(requestLog.CodexPromptCacheEnabled),
+			boolToInt(requestLog.CodexPromptCacheEligible),
+			boolToInt(requestLog.CodexPromptCacheHit),
+			requestLog.codexPromptCacheBucket,
+			requestLog.codexPromptCacheFingerprint,
 		)
 
 		if err != nil {
@@ -1085,6 +1103,11 @@ func ensureRequestLogTableWithDB(db *sql.DB) error {
 		reasoning_tokens INTEGER,
 		is_stream INTEGER DEFAULT 0,
 		duration_sec REAL DEFAULT 0,
+		codex_prompt_cache_enabled INTEGER DEFAULT 0,
+		codex_prompt_cache_eligible INTEGER DEFAULT 0,
+		codex_prompt_cache_hit INTEGER DEFAULT 0,
+		codex_prompt_cache_bucket TEXT DEFAULT '',
+		codex_prompt_cache_fingerprint TEXT DEFAULT '',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`
 
@@ -1099,6 +1122,21 @@ func ensureRequestLogTableWithDB(db *sql.DB) error {
 		return err
 	}
 	if err := ensureRequestLogColumn(db, "duration_sec", "REAL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := ensureRequestLogColumn(db, "codex_prompt_cache_enabled", "INTEGER DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := ensureRequestLogColumn(db, "codex_prompt_cache_eligible", "INTEGER DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := ensureRequestLogColumn(db, "codex_prompt_cache_hit", "INTEGER DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := ensureRequestLogColumn(db, "codex_prompt_cache_bucket", "TEXT DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureRequestLogColumn(db, "codex_prompt_cache_fingerprint", "TEXT DEFAULT ''"); err != nil {
 		return err
 	}
 
@@ -1190,28 +1228,36 @@ func parseCodexNonStreamUsage(body []byte, usage *ReqeustLog) {
 }
 
 type ReqeustLog struct {
-	ID                int64   `json:"id"`
-	Platform          string  `json:"platform"` // claude、codex 或 gemini
-	Model             string  `json:"model"`
-	Provider          string  `json:"provider"` // provider name
-	HttpCode          int     `json:"http_code"`
-	InputTokens       int     `json:"input_tokens"`
-	OutputTokens      int     `json:"output_tokens"`
-	CacheCreateTokens int     `json:"cache_create_tokens"`
-	CacheReadTokens   int     `json:"cache_read_tokens"`
-	ReasoningTokens   int     `json:"reasoning_tokens"`
-	IsStream          bool    `json:"is_stream"`
-	DurationSec       float64 `json:"duration_sec"`
-	CreatedAt         string  `json:"created_at"`
-	InputCost         float64 `json:"input_cost"`
-	OutputCost        float64 `json:"output_cost"`
-	ReasoningCost     float64 `json:"reasoning_cost"`
-	CacheCreateCost   float64 `json:"cache_create_cost"`
-	CacheReadCost     float64 `json:"cache_read_cost"`
-	Ephemeral5mCost   float64 `json:"ephemeral_5m_cost"`
-	Ephemeral1hCost   float64 `json:"ephemeral_1h_cost"`
-	TotalCost         float64 `json:"total_cost"`
-	HasPricing        bool    `json:"has_pricing"`
+	ID                        int64   `json:"id"`
+	Platform                  string  `json:"platform"` // claude、codex 或 gemini
+	Model                     string  `json:"model"`
+	Provider                  string  `json:"provider"` // provider name
+	HttpCode                  int     `json:"http_code"`
+	InputTokens               int     `json:"input_tokens"`
+	OutputTokens              int     `json:"output_tokens"`
+	CacheCreateTokens         int     `json:"cache_create_tokens"`
+	CacheReadTokens           int     `json:"cache_read_tokens"`
+	ReasoningTokens           int     `json:"reasoning_tokens"`
+	IsStream                  bool    `json:"is_stream"`
+	DurationSec               float64 `json:"duration_sec"`
+	CreatedAt                 string  `json:"created_at"`
+	InputCost                 float64 `json:"input_cost"`
+	OutputCost                float64 `json:"output_cost"`
+	ReasoningCost             float64 `json:"reasoning_cost"`
+	CacheCreateCost           float64 `json:"cache_create_cost"`
+	CacheReadCost             float64 `json:"cache_read_cost"`
+	Ephemeral5mCost           float64 `json:"ephemeral_5m_cost"`
+	Ephemeral1hCost           float64 `json:"ephemeral_1h_cost"`
+	TotalCost                 float64 `json:"total_cost"`
+	HasPricing                bool    `json:"has_pricing"`
+	CodexPromptCacheEnabled   bool    `json:"codex_prompt_cache_enabled,omitempty"`
+	CodexPromptCacheEligible  bool    `json:"codex_prompt_cache_eligible,omitempty"`
+	CodexPromptCacheHit       bool    `json:"codex_prompt_cache_hit,omitempty"`
+	CodexPromptCacheMatchable bool    `json:"codex_prompt_cache_matchable,omitempty"`
+
+	codexPromptCacheBucket      string `json:"-"`
+	codexPromptCacheFingerprint string `json:"-"`
+	codexPromptCacheInScope     bool   `json:"-"`
 }
 
 // claude code usage parser
