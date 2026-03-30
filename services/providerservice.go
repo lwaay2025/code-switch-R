@@ -52,6 +52,10 @@ type Provider struct {
 	// Codex Prompt Cache 开关：开启后按原仓策略为 Responses 请求注入或复用 prompt_cache_key，并同步会话头。
 	CodexPromptCacheEnabled bool `json:"codexPromptCacheEnabled,omitempty"`
 
+	// Codex Response Chain 开关：开启后允许在后续 /responses 请求中注入 previous_response_id。
+	// 默认关闭；第一轮请求始终不会注入 previous_response_id。
+	CodexResponseChainEnabled bool `json:"codexResponseChainEnabled,omitempty"`
+
 	// ========== 可用性监控字段（新增 v0.5.0） ==========
 
 	// 可用性监控开关 - 在可用性页面配置
@@ -396,18 +400,20 @@ func (ps *ProviderService) DuplicateProvider(kind string, sourceID int64) (*Prov
 
 	// 5. 克隆配置（深拷贝）
 	cloned := &Provider{
-		ID:                    newID,
-		Name:                  source.Name + " (副本)",
-		APIURL:                source.APIURL,
-		APIKey:                source.APIKey,
-		Site:                  source.Site,
-		Icon:                  source.Icon,
-		Tint:                  source.Tint,
-		Accent:                source.Accent,
-		Enabled:               false, // 默认禁用，避免与源供应商冲突
-		Level:                 source.Level,
-		APIEndpoint:           source.APIEndpoint, // 复制端点配置
-		MaxConcurrentRequests: source.MaxConcurrentRequests,
+		ID:                        newID,
+		Name:                      source.Name + " (副本)",
+		APIURL:                    source.APIURL,
+		APIKey:                    source.APIKey,
+		Site:                      source.Site,
+		Icon:                      source.Icon,
+		Tint:                      source.Tint,
+		Accent:                    source.Accent,
+		Enabled:                   false, // 默认禁用，避免与源供应商冲突
+		Level:                     source.Level,
+		APIEndpoint:               source.APIEndpoint, // 复制端点配置
+		MaxConcurrentRequests:     source.MaxConcurrentRequests,
+		CodexPromptCacheEnabled:   source.CodexPromptCacheEnabled,
+		CodexResponseChainEnabled: source.CodexResponseChainEnabled,
 		// 可用性监控配置
 		AvailabilityMonitorEnabled: source.AvailabilityMonitorEnabled,
 		ConnectivityAutoBlacklist:  false, // 副本默认关闭自动拉黑

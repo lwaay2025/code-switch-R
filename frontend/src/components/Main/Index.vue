@@ -760,6 +760,20 @@
                   <span class="field-hint">{{ t('components.main.form.hints.codexPromptCacheEnabled') }}</span>
                 </div>
 
+                <div v-if="modalState.tabId === 'codex'" class="form-field switch-field">
+                  <span>{{ t('components.main.form.labels.codexResponseChainEnabled') }}</span>
+                  <div class="switch-inline">
+                    <label class="mac-switch">
+                      <input type="checkbox" v-model="modalState.form.codexResponseChainEnabled" />
+                      <span></span>
+                    </label>
+                    <span class="switch-text">
+                      {{ modalState.form.codexResponseChainEnabled ? t('components.main.form.switch.on') : t('components.main.form.switch.off') }}
+                    </span>
+                  </div>
+                  <span class="field-hint">{{ t('components.main.form.hints.codexResponseChainEnabled') }}</span>
+                </div>
+
                 <div class="form-field">
                   <ModelWhitelistEditor v-model="modalState.form.supportedModels" />
                 </div>
@@ -1608,6 +1622,7 @@ const serializeProviders = (providers: AutomationCard[]) =>
     ...provider,
     maxConcurrentRequests: normalizeMaxConcurrentRequests(provider.maxConcurrentRequests),
     codexPromptCacheEnabled: !!provider.codexPromptCacheEnabled,
+    codexResponseChainEnabled: !!provider.codexResponseChainEnabled,
     // 确保可用性配置正确序列化
     availabilityMonitorEnabled: !!provider.availabilityMonitorEnabled,
     connectivityAutoBlacklist: !!provider.connectivityAutoBlacklist,
@@ -2615,6 +2630,7 @@ type VendorForm = {
   level?: number
   maxConcurrentRequests?: string
   codexPromptCacheEnabled?: boolean
+  codexResponseChainEnabled?: boolean
   apiEndpoint?: string
   cliConfig?: Record<string, any>
   // === 可用性监控配置（新） ===
@@ -2648,6 +2664,7 @@ const defaultFormValues = (platform?: string): VendorForm => ({
   level: 1,
   maxConcurrentRequests: '0',
   codexPromptCacheEnabled: false,
+  codexResponseChainEnabled: false,
   enabled: true,
   supportedModels: {},
   modelMapping: {},
@@ -2761,6 +2778,7 @@ const openEditModal = (card: AutomationCard) => {
     level: card.level || 1,
     maxConcurrentRequests: String(card.maxConcurrentRequests ?? 0),
     codexPromptCacheEnabled: !!card.codexPromptCacheEnabled,
+    codexResponseChainEnabled: !!card.codexResponseChainEnabled,
     enabled: card.enabled,
     supportedModels: card.supportedModels || {},
     modelMapping: card.modelMapping || {},
@@ -2842,6 +2860,7 @@ const submitModal = async () => {
       level: nextLevel,
       maxConcurrentRequests: normalizeMaxConcurrentRequests(modalState.form.maxConcurrentRequests),
       codexPromptCacheEnabled: !!modalState.form.codexPromptCacheEnabled,
+      codexResponseChainEnabled: !!modalState.form.codexResponseChainEnabled,
       enabled: modalState.form.enabled,
       supportedModels: modalState.form.supportedModels || {},
       modelMapping: modalState.form.modelMapping || {},
@@ -2880,6 +2899,7 @@ const submitModal = async () => {
       level: normalizeLevel(modalState.form.level),
       maxConcurrentRequests: normalizeMaxConcurrentRequests(modalState.form.maxConcurrentRequests),
       codexPromptCacheEnabled: !!modalState.form.codexPromptCacheEnabled,
+      codexResponseChainEnabled: !!modalState.form.codexResponseChainEnabled,
       enabled: modalState.form.enabled,
       supportedModels: modalState.form.supportedModels || {},
       modelMapping: modalState.form.modelMapping || {},

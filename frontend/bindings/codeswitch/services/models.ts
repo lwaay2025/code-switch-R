@@ -2040,6 +2040,12 @@ export class Provider {
     "codexPromptCacheEnabled"?: boolean;
 
     /**
+     * Codex Response Chain 开关：开启后允许在后续 /responses 请求中注入 previous_response_id。
+     * 默认关闭；第一轮请求始终不会注入 previous_response_id。
+     */
+    "codexResponseChainEnabled"?: boolean;
+
+    /**
      * 可用性监控开关 - 在可用性页面配置
      * 启用后才会执行后台健康检查
      */
@@ -2117,7 +2123,7 @@ export class Provider {
     static createFrom($$source: any = {}): Provider {
         const $$createField10_0 = $$createType20;
         const $$createField11_0 = $$createType4;
-        const $$createField17_0 = $$createType22;
+        const $$createField18_0 = $$createType22;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("supportedModels" in $$parsedSource) {
             $$parsedSource["supportedModels"] = $$createField10_0($$parsedSource["supportedModels"]);
@@ -2126,7 +2132,7 @@ export class Provider {
             $$parsedSource["modelMapping"] = $$createField11_0($$parsedSource["modelMapping"]);
         }
         if ("availabilityConfig" in $$parsedSource) {
-            $$parsedSource["availabilityConfig"] = $$createField17_0($$parsedSource["availabilityConfig"]);
+            $$parsedSource["availabilityConfig"] = $$createField18_0($$parsedSource["availabilityConfig"]);
         }
         return new Provider($$parsedSource as Partial<Provider>);
     }

@@ -12,8 +12,9 @@ func TestPrepareCodexResponseChainInjectsStoreOnFirstRequest(t *testing.T) {
 	t.Cleanup(globalCodexResponseChainStore.Reset)
 
 	provider := Provider{
-		APIURL: "https://api.example.com",
-		APIKey: "test-api-key",
+		APIURL:                    "https://api.example.com",
+		APIKey:                    "test-api-key",
+		CodexResponseChainEnabled: true,
 	}
 	body := []byte(`{"model":"gpt-5.1","input":"hello","instructions":"system"}`)
 
@@ -38,13 +39,44 @@ func TestPrepareCodexResponseChainInjectsStoreOnFirstRequest(t *testing.T) {
 	}
 }
 
-func TestPrepareCodexResponseChainUsesPromptCacheKeyAsSessionKey(t *testing.T) {
+func TestPrepareCodexResponseChainDisabledByDefault(t *testing.T) {
 	globalCodexResponseChainStore.Reset()
 	t.Cleanup(globalCodexResponseChainStore.Reset)
 
 	provider := Provider{
 		APIURL: "https://api.example.com",
 		APIKey: "test-api-key",
+	}
+	body := []byte(`{"model":"gpt-5.1","input":"hello"}`)
+
+	nextBody, plan, err := prepareCodexResponseChain(provider, "/v1/responses", map[string]string{
+		codexResponseChainSessionHeader: "session-disabled",
+	}, body)
+	if err != nil {
+		t.Fatalf("prepareCodexResponseChain returned error: %v", err)
+	}
+	if plan.Active {
+		t.Fatal("expected response chain plan to stay inactive when provider toggle is off")
+	}
+	if string(nextBody) != string(body) {
+		t.Fatalf("request body should stay unchanged when response chain is disabled: got %s", string(nextBody))
+	}
+	if gjson.GetBytes(nextBody, "store").Exists() {
+		t.Fatal("did not expect store to be injected when response chain is disabled")
+	}
+	if gjson.GetBytes(nextBody, "previous_response_id").Exists() {
+		t.Fatal("did not expect previous_response_id when response chain is disabled")
+	}
+}
+
+func TestPrepareCodexResponseChainUsesPromptCacheKeyAsSessionKey(t *testing.T) {
+	globalCodexResponseChainStore.Reset()
+	t.Cleanup(globalCodexResponseChainStore.Reset)
+
+	provider := Provider{
+		APIURL:                    "https://api.example.com",
+		APIKey:                    "test-api-key",
+		CodexResponseChainEnabled: true,
 	}
 
 	body := []byte(`{"model":"gpt-5.1","store":false,"prompt_cache_key":"pi-session-1","input":[{"role":"user","content":"hello"}]}`)
@@ -68,8 +100,9 @@ func TestPrepareCodexResponseChainRewritesSuffixAndPreservesInstructionsAndTools
 	t.Cleanup(globalCodexResponseChainStore.Reset)
 
 	provider := Provider{
-		APIURL: "https://api.example.com",
-		APIKey: "test-api-key",
+		APIURL:                    "https://api.example.com",
+		APIKey:                    "test-api-key",
+		CodexResponseChainEnabled: true,
 	}
 	headers := map[string]string{
 		codexResponseChainSessionHeader: "session-1",
@@ -120,8 +153,9 @@ func TestPrepareCodexResponseChainTrimsReplayOnlyAssistantItems(t *testing.T) {
 	t.Cleanup(globalCodexResponseChainStore.Reset)
 
 	provider := Provider{
-		APIURL: "https://api.example.com",
-		APIKey: "test-api-key",
+		APIURL:                    "https://api.example.com",
+		APIKey:                    "test-api-key",
+		CodexResponseChainEnabled: true,
 	}
 	headers := map[string]string{
 		"session_id": "pi-tool-loop-1",
@@ -171,8 +205,9 @@ func TestPrepareCodexResponseChainFallsBackWhenHistoryDiverges(t *testing.T) {
 	t.Cleanup(globalCodexResponseChainStore.Reset)
 
 	provider := Provider{
-		APIURL: "https://api.example.com",
-		APIKey: "test-api-key",
+		APIURL:                    "https://api.example.com",
+		APIKey:                    "test-api-key",
+		CodexResponseChainEnabled: true,
 	}
 	headers := map[string]string{
 		codexResponseChainSessionHeader: "session-2",

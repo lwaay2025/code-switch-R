@@ -530,7 +530,7 @@ func TestProviderLevelGrouping(t *testing.T) {
 			name: "默认 Level（未设置）",
 			providers: []Provider{
 				{ID: 1, Name: "Provider-A", Level: 0}, // 0 应默认为 1
-				{ID: 2, Name: "Provider-B"},            // 未设置应默认为 1
+				{ID: 2, Name: "Provider-B"},           // 未设置应默认为 1
 			},
 			expected: map[int][]string{
 				1: {"Provider-A", "Provider-B"},
@@ -841,5 +841,57 @@ func TestDuplicateProvider(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDuplicateProviderCopiesCodexFlags(t *testing.T) {
+	isolateHomeDir(t)
+
+	providerService := NewProviderService()
+	original := Provider{
+		ID:                        1,
+		Name:                      "right.codes",
+		APIURL:                    "https://api.example.com",
+		APIKey:                    "sk-test-key",
+		Enabled:                   true,
+		Level:                     2,
+		CodexPromptCacheEnabled:   true,
+		CodexResponseChainEnabled: true,
+	}
+
+	if err := providerService.SaveProviders("codex", []Provider{original}); err != nil {
+		t.Fatalf("保存原始 provider 失败: %v", err)
+	}
+
+	cloned, err := providerService.DuplicateProvider("codex", original.ID)
+	if err != nil {
+		t.Fatalf("复制 provider 失败: %v", err)
+	}
+
+	if cloned.Name != "right.codes (副本)" {
+		t.Fatalf("副本名称 = %q, want %q", cloned.Name, "right.codes (副本)")
+	}
+	if cloned.Enabled {
+		t.Fatal("副本应默认禁用")
+	}
+	if !cloned.CodexPromptCacheEnabled {
+		t.Fatal("副本应保留 CodexPromptCacheEnabled")
+	}
+	if !cloned.CodexResponseChainEnabled {
+		t.Fatal("副本应保留 CodexResponseChainEnabled")
+	}
+
+	providers, err := providerService.LoadProviders("codex")
+	if err != nil {
+		t.Fatalf("加载 provider 失败: %v", err)
+	}
+	if len(providers) != 2 {
+		t.Fatalf("provider 数量 = %d, want 2", len(providers))
+	}
+	if !providers[1].CodexPromptCacheEnabled {
+		t.Fatal("持久化后的副本应保留 CodexPromptCacheEnabled")
+	}
+	if !providers[1].CodexResponseChainEnabled {
+		t.Fatal("持久化后的副本应保留 CodexResponseChainEnabled")
 	}
 }

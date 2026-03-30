@@ -840,6 +840,7 @@ func (prs *ProviderRelayService) forwardRequest(
 	}
 
 	responseChainPlan := codexResponseChainPlan{}
+	originalBodyBytes := append([]byte(nil), bodyBytes...)
 	if kind == "codex" {
 		var rewriteErr error
 		bodyBytes, responseChainPlan, rewriteErr = prepareCodexResponseChain(provider, endpoint, headers, bodyBytes)
@@ -849,6 +850,7 @@ func (prs *ProviderRelayService) forwardRequest(
 		logCodexResponseChainRewrite(endpoint, responseChainPlan, bodyBytes)
 		delete(headers, codexResponseChainSessionHeader)
 	}
+	prePromptCacheHeaders := cloneMap(headers)
 
 	promptCachePlan := codexPromptCachePlan{}
 	if kind == "codex" {
@@ -917,17 +919,7 @@ func (prs *ProviderRelayService) forwardRequest(
 		}
 	}()
 
-	req := xrequest.New().
-		SetClient(GetHTTPClient()).
-		SetHeaders(headers).
-		SetQueryParams(query).
-		SetRetry(1, 500*time.Millisecond).
-		SetTimeout(32 * time.Hour) // 32小时超时，适配超大型项目分析
-
-	reqBody := bytes.NewReader(bodyBytes)
-	req = req.SetBody(reqBody)
-
-	resp, err := req.Post(targetURL)
+	resp, err := executeUpstreamRequest(targetURL, headers, query, bodyBytes)
 
 	// 无论成功失败，先尝试记录 HttpCode
 	if resp != nil {
@@ -953,6 +945,42 @@ func (prs *ProviderRelayService) forwardRequest(
 	}
 
 	status := requestLog.HttpCode
+	if shouldRetryCodexWithoutPreviousResponseID(kind, responseChainPlan, bodyBytes, status, resp) {
+		fmt.Printf("[CodexChain] provider %s 不支持 previous_response_id，自动回退重试\n", provider.Name)
+		responseChainPlan = disableCodexResponseChain(responseChainPlan)
+
+		retryBody, retryErr := rebuildCodexResponseChainFallbackBody(originalBodyBytes, responseChainPlan)
+		if retryErr != nil {
+			return false, fmt.Errorf("rebuild codex fallback request: %w", retryErr), false
+		}
+
+		retryHeaders := cloneMap(prePromptCacheHeaders)
+		if kind == "codex" {
+			retryBody, retryHeaders, promptCachePlan = applyCodexPromptCache(provider, endpoint, retryHeaders, retryBody)
+			requestLog.CodexPromptCacheEnabled = promptCachePlan.Enabled
+			requestLog.CodexPromptCacheEligible = promptCachePlan.Eligible
+			requestLog.codexPromptCacheBucket = promptCachePlan.BucketHash
+			requestLog.codexPromptCacheFingerprint = promptCachePlan.Fingerprint
+		}
+
+		resp, err = executeUpstreamRequest(targetURL, retryHeaders, query, retryBody)
+		requestLog.HttpCode = 0
+		if resp != nil {
+			requestLog.HttpCode = resp.StatusCode()
+		}
+		if err != nil {
+			if resp != nil && requestLog.HttpCode == 0 {
+				requestLog.HttpCode = http.StatusBadGateway
+			}
+			return false, err, false
+		}
+		if resp == nil {
+			return false, fmt.Errorf("empty response"), false
+		}
+		status = requestLog.HttpCode
+		bodyBytes = retryBody
+		headers = retryHeaders
+	}
 
 	if resp.Error() != nil {
 		// resp 存在、有错误、但状态码为 0：客户端中断，不计入失败
@@ -982,24 +1010,55 @@ func (prs *ProviderRelayService) forwardRequest(
 	if status >= http.StatusOK && status < http.StatusMultipleChoices {
 		// 非流式：先读完 body 解析 token，再决定是否写回客户端（允许 token=0 时降级到下一个 provider）
 		if !isStream {
-			body := resp.Bytes()
+			upstreamEventStream := isEventStreamContentType(resp.Headers().Get("Content-Type"))
+			var chainCapture *codexResponseChainCapture
+			var body []byte
+			if upstreamEventStream {
+				chainCapture = newCodexResponseChainCapture(kind)
+				requestLog.IsStream = true
+				if responseChainPlan.Active && responseChainPlan.SessionKey != "" {
+					c.Writer.Header().Set(codexResponseChainSessionHeader, responseChainPlan.SessionKey)
+				}
+				var readErr error
+				body, readErr = readRawResponseBodyPreserve(resp)
+				if readErr != nil {
+					return false, fmt.Errorf("read upstream event stream: %w", readErr), false
+				}
+				parseSSEPayload(kind, body, requestLog, chainCapture)
+			} else {
+				body = resp.Bytes()
+				parseNonStreamTokenUsage(kind, body, requestLog)
+			}
 			if responseChainPlan.Active && responseChainPlan.SessionKey != "" {
 				c.Writer.Header().Set(codexResponseChainSessionHeader, responseChainPlan.SessionKey)
 			}
-			parseNonStreamTokenUsage(kind, body, requestLog)
 			if requestLog.OutputTokens == 0 && !isResponsesCompactVariantEndpoint(endpoint) {
-				if kind == "codex" && isUsableCodexResponseBody(body) {
-					persistCodexResponseChain(responseChainPlan, extractCodexResponseID(body))
-					_, copyErr := resp.ToHttpResponseWriter(c.Writer)
-					if copyErr != nil {
-						fmt.Printf("[WARN] 复制响应到客户端失败（不影响provider成功判定）: %v\n", copyErr)
+				if kind == "codex" {
+					if chainCapture != nil && chainCapture.IsUsableSuccess() {
+						persistCodexResponseChain(responseChainPlan, chainCapture.GetResponseID())
+						_, copyErr := resp.ToHttpResponseWriter(c.Writer)
+						if copyErr != nil {
+							fmt.Printf("[WARN] 复制响应到客户端失败（不影响provider成功判定）: %v\n", copyErr)
+						}
+						return true, nil, true
 					}
-					return true, nil, true
+					if !upstreamEventStream && isUsableCodexResponseBody(body) {
+						persistCodexResponseChain(responseChainPlan, extractCodexResponseID(body))
+						_, copyErr := resp.ToHttpResponseWriter(c.Writer)
+						if copyErr != nil {
+							fmt.Printf("[WARN] 复制响应到客户端失败（不影响provider成功判定）: %v\n", copyErr)
+						}
+						return true, nil, true
+					}
 				}
 				return false, errTokenZero, false
 			}
 			if kind == "codex" {
-				persistCodexResponseChain(responseChainPlan, extractCodexResponseID(body))
+				if upstreamEventStream && chainCapture != nil {
+					persistCodexResponseChain(responseChainPlan, chainCapture.GetResponseID())
+				} else {
+					persistCodexResponseChain(responseChainPlan, extractCodexResponseID(body))
+				}
 			}
 			_, copyErr := resp.ToHttpResponseWriter(c.Writer)
 			if copyErr != nil {
@@ -1009,12 +1068,9 @@ func (prs *ProviderRelayService) forwardRequest(
 		}
 
 		// 流式：先转发，再根据解析出的 token 判断是否失败（但响应已写入，不能降级）
-		var chainCapture *codexResponseChainCapture
-		if kind == "codex" && responseChainPlan.Active {
-			chainCapture = &codexResponseChainCapture{}
-			if responseChainPlan.SessionKey != "" {
-				c.Writer.Header().Set(codexResponseChainSessionHeader, responseChainPlan.SessionKey)
-			}
+		chainCapture := newCodexResponseChainCapture(kind)
+		if kind == "codex" && responseChainPlan.Active && responseChainPlan.SessionKey != "" {
+			c.Writer.Header().Set(codexResponseChainSessionHeader, responseChainPlan.SessionKey)
 		}
 		_, copyErr := resp.ToHttpResponseWriter(c.Writer, ReqeustLogHook(c, kind, requestLog, chainCapture))
 		if copyErr != nil {
@@ -1028,13 +1084,27 @@ func (prs *ProviderRelayService) forwardRequest(
 			}
 			return false, errTokenZero, true
 		}
-		if kind == "codex" {
+		if kind == "codex" && chainCapture != nil {
 			persistCodexResponseChain(responseChainPlan, chainCapture.GetResponseID())
 		}
 		return true, nil, true
 	}
 
 	return false, fmt.Errorf("upstream status %d", status), false
+}
+
+func executeUpstreamRequest(targetURL string, headers map[string]string, query map[string]string, bodyBytes []byte) (*xrequest.Response, error) {
+	req := xrequest.New().
+		SetClient(GetHTTPClient()).
+		SetHeaders(headers).
+		SetQueryParams(query).
+		SetRetry(1, 500*time.Millisecond).
+		SetTimeout(32 * time.Hour) // 32小时超时，适配超大型项目分析
+
+	reqBody := bytes.NewReader(bodyBytes)
+	req = req.SetBody(reqBody)
+
+	return req.Post(targetURL)
 }
 
 func cloneHeaders(header http.Header) map[string]string {
@@ -1210,6 +1280,92 @@ func parseEventPayload(payload string, parser func(string, *ReqeustLog), usage *
 			parser(strings.TrimPrefix(line, "data: "), usage)
 		}
 	}
+}
+
+func parseSSEPayload(kind string, payload []byte, usage *ReqeustLog, chainCapture *codexResponseChainCapture) {
+	if len(payload) == 0 {
+		return
+	}
+
+	parserFn := ClaudeCodeParseTokenUsageFromResponse
+	switch kind {
+	case "codex":
+		parserFn = CodexParseTokenUsageFromResponse
+	case "gemini":
+		parserFn = GeminiParseTokenUsageFromResponse
+	}
+
+	text := string(payload)
+	parseEventPayload(text, parserFn, usage)
+	if kind == "codex" && chainCapture != nil {
+		chainCapture.ObservePayload(text)
+	}
+}
+
+func isEventStreamContentType(contentType string) bool {
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	return strings.Contains(contentType, "text/event-stream")
+}
+
+func readRawResponseBodyPreserve(resp *xrequest.Response) ([]byte, error) {
+	if resp == nil || resp.RawResponse == nil || resp.RawResponse.Body == nil {
+		return nil, nil
+	}
+
+	body, err := io.ReadAll(resp.RawResponse.Body)
+	if err != nil {
+		return nil, err
+	}
+	_ = resp.RawResponse.Body.Close()
+	resp.RawResponse.Body = io.NopCloser(bytes.NewReader(body))
+	return body, nil
+}
+
+func newCodexResponseChainCapture(kind string) *codexResponseChainCapture {
+	if kind != "codex" {
+		return nil
+	}
+	return &codexResponseChainCapture{}
+}
+
+func shouldRetryCodexWithoutPreviousResponseID(
+	kind string,
+	plan codexResponseChainPlan,
+	body []byte,
+	status int,
+	resp *xrequest.Response,
+) bool {
+	if kind != "codex" || !plan.Active || resp == nil || status < http.StatusBadRequest {
+		return false
+	}
+	if strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String()) == "" {
+		return false
+	}
+
+	errorBody := resp.Bytes()
+	if len(errorBody) == 0 {
+		return false
+	}
+
+	lower := strings.ToLower(strings.TrimSpace(string(errorBody)))
+	if !strings.Contains(lower, "previous_response_id") {
+		return false
+	}
+
+	for _, marker := range []string{
+		"unsupported parameter",
+		"unsupported",
+		"not supported",
+		"unknown field",
+		"extra_forbidden",
+		"unexpected",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // parseNonStreamTokenUsage parses token usage from a non-SSE JSON response body.

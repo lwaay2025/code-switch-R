@@ -71,12 +71,13 @@ func TestResponsesCompactRoute(t *testing.T) {
 	blacklistService := NewBlacklistService(settingsService, nil)
 
 	testProvider := Provider{
-		ID:      1,
-		Name:    "TestCodexProvider",
-		APIURL:  upstreamServer.URL,
-		APIKey:  "test-api-key",
-		Enabled: true,
-		Level:   1,
+		ID:                        1,
+		Name:                      "TestCodexProvider",
+		APIURL:                    upstreamServer.URL,
+		APIKey:                    "test-api-key",
+		Enabled:                   true,
+		Level:                     1,
+		CodexResponseChainEnabled: true,
 	}
 
 	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
@@ -131,12 +132,13 @@ func TestV1ResponsesCompactRoute(t *testing.T) {
 	blacklistService := NewBlacklistService(settingsService, nil)
 
 	testProvider := Provider{
-		ID:      1,
-		Name:    "TestCodexProvider",
-		APIURL:  upstreamServer.URL,
-		APIKey:  "test-api-key",
-		Enabled: true,
-		Level:   1,
+		ID:                        1,
+		Name:                      "TestCodexProvider",
+		APIURL:                    upstreamServer.URL,
+		APIKey:                    "test-api-key",
+		Enabled:                   true,
+		Level:                     1,
+		CodexResponseChainEnabled: true,
 	}
 
 	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
@@ -185,12 +187,13 @@ func TestResponsesCompactPassthroughWhenUsageMissing(t *testing.T) {
 	blacklistService := NewBlacklistService(settingsService, nil)
 
 	testProvider := Provider{
-		ID:      1,
-		Name:    "TestCodexProvider",
-		APIURL:  upstreamServer.URL,
-		APIKey:  "test-api-key",
-		Enabled: true,
-		Level:   1,
+		ID:                        1,
+		Name:                      "TestCodexProvider",
+		APIURL:                    upstreamServer.URL,
+		APIKey:                    "test-api-key",
+		Enabled:                   true,
+		Level:                     1,
+		CodexResponseChainEnabled: true,
 	}
 
 	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
@@ -265,12 +268,13 @@ func TestResponsesCompactStripsStoreAndStream(t *testing.T) {
 	blacklistService := NewBlacklistService(settingsService, nil)
 
 	testProvider := Provider{
-		ID:      1,
-		Name:    "TestCodexProvider",
-		APIURL:  upstreamServer.URL,
-		APIKey:  "test-api-key",
-		Enabled: true,
-		Level:   1,
+		ID:                        1,
+		Name:                      "TestCodexProvider",
+		APIURL:                    upstreamServer.URL,
+		APIKey:                    "test-api-key",
+		Enabled:                   true,
+		Level:                     1,
+		CodexResponseChainEnabled: true,
 	}
 
 	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
@@ -422,12 +426,13 @@ func TestCodexResponsesChainRewritesFollowUpRequests(t *testing.T) {
 	blacklistService := NewBlacklistService(settingsService, nil)
 
 	testProvider := Provider{
-		ID:      1,
-		Name:    "TestCodexProvider",
-		APIURL:  upstreamServer.URL,
-		APIKey:  "test-api-key",
-		Enabled: true,
-		Level:   1,
+		ID:                        1,
+		Name:                      "TestCodexProvider",
+		APIURL:                    upstreamServer.URL,
+		APIKey:                    "test-api-key",
+		Enabled:                   true,
+		Level:                     1,
+		CodexResponseChainEnabled: true,
 	}
 
 	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
@@ -535,12 +540,13 @@ func TestCodexResponsesChainRewritesStreamingFollowUpRequests(t *testing.T) {
 	blacklistService := NewBlacklistService(settingsService, nil)
 
 	testProvider := Provider{
-		ID:      1,
-		Name:    "TestCodexProvider",
-		APIURL:  upstreamServer.URL,
-		APIKey:  "test-api-key",
-		Enabled: true,
-		Level:   1,
+		ID:                        1,
+		Name:                      "TestCodexProvider",
+		APIURL:                    upstreamServer.URL,
+		APIKey:                    "test-api-key",
+		Enabled:                   true,
+		Level:                     1,
+		CodexResponseChainEnabled: true,
 	}
 
 	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
@@ -646,12 +652,13 @@ func TestCodexResponsesChainUsesPromptCacheKeyForStreamingPiStyleReplay(t *testi
 	blacklistService := NewBlacklistService(settingsService, nil)
 
 	testProvider := Provider{
-		ID:      1,
-		Name:    "TestCodexProvider",
-		APIURL:  upstreamServer.URL,
-		APIKey:  "test-api-key",
-		Enabled: true,
-		Level:   1,
+		ID:                        1,
+		Name:                      "TestCodexProvider",
+		APIURL:                    upstreamServer.URL,
+		APIKey:                    "test-api-key",
+		Enabled:                   true,
+		Level:                     1,
+		CodexResponseChainEnabled: true,
 	}
 
 	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
@@ -764,12 +771,13 @@ func TestCodexResponsesChainTrimsReplayOnlyAssistantItemsForPiToolLoop(t *testin
 	blacklistService := NewBlacklistService(settingsService, nil)
 
 	testProvider := Provider{
-		ID:      1,
-		Name:    "TestCodexProvider",
-		APIURL:  upstreamServer.URL,
-		APIKey:  "test-api-key",
-		Enabled: true,
-		Level:   1,
+		ID:                        1,
+		Name:                      "TestCodexProvider",
+		APIURL:                    upstreamServer.URL,
+		APIKey:                    "test-api-key",
+		Enabled:                   true,
+		Level:                     1,
+		CodexResponseChainEnabled: true,
 	}
 
 	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
@@ -889,6 +897,226 @@ func TestPrefixedCodexRouteTargetsProviderByName(t *testing.T) {
 	}
 	if !hitProviderB {
 		t.Fatal("请求应转发到指定 provider beta")
+	}
+}
+
+func TestCodexNonStreamRequestAcceptsUpstreamEventStreamSuccess(t *testing.T) {
+	isolateHomeDir(t)
+	gin.SetMode(gin.TestMode)
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("event: response.created\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_sse_nonstream\"}}\n\n"))
+		_, _ = w.Write([]byte("event: response.output_text.delta\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"READY\"}\n\n"))
+		_, _ = w.Write([]byte("event: response.completed\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_sse_nonstream\",\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":0}}}\n\n"))
+	}))
+	defer upstreamServer.Close()
+
+	providerService := NewProviderService()
+	settingsService := &SettingsService{}
+	blacklistService := NewBlacklistService(settingsService, nil)
+
+	testProvider := Provider{
+		ID:                        1,
+		Name:                      "right.codes (副本)",
+		APIURL:                    upstreamServer.URL,
+		APIKey:                    "test-api-key",
+		Enabled:                   true,
+		Level:                     1,
+		CodexResponseChainEnabled: true,
+	}
+
+	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	router := gin.New()
+	relayService.registerRoutes(router)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.1","input":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "resp_sse_nonstream") {
+		t.Fatalf("响应体应保留上游 SSE 内容，实际: %s", w.Body.String())
+	}
+
+	lastUsed := relayService.GetLastUsedProvider("codex")
+	if lastUsed == nil || lastUsed.ProviderName != testProvider.Name {
+		t.Fatalf("最后使用的 provider = %+v, want %q", lastUsed, testProvider.Name)
+	}
+}
+
+func TestCodexStreamRequestWithoutChainSessionStillCountsAsSuccess(t *testing.T) {
+	isolateHomeDir(t)
+	gin.SetMode(gin.TestMode)
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_stream_no_chain\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"READY\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_stream_no_chain\",\"status\":\"completed\",\"usage\":{\"input_tokens\":7,\"output_tokens\":0}}}\n\n"))
+	}))
+	defer upstreamServer.Close()
+
+	providerService := NewProviderService()
+	settingsService := &SettingsService{}
+	blacklistService := NewBlacklistService(settingsService, nil)
+
+	testProvider := Provider{
+		ID:      1,
+		Name:    "TestCodexProvider",
+		APIURL:  upstreamServer.URL,
+		APIKey:  "test-api-key",
+		Enabled: true,
+		Level:   1,
+	}
+
+	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	router := gin.New()
+	relayService.registerRoutes(router)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.1","stream":true,"input":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+
+	lastUsed := relayService.GetLastUsedProvider("codex")
+	if lastUsed == nil || lastUsed.ProviderName != testProvider.Name {
+		t.Fatalf("最后使用的 provider = %+v, want %q", lastUsed, testProvider.Name)
+	}
+}
+
+func TestCodexAutoFallbackWhenProviderRejectsPreviousResponseID(t *testing.T) {
+	isolateHomeDir(t)
+	gin.SetMode(gin.TestMode)
+	globalCodexResponseChainStore.Reset()
+	t.Cleanup(globalCodexResponseChainStore.Reset)
+
+	type seenRequest struct {
+		previousResponseID string
+		inputCount         int64
+	}
+	seen := make([]seenRequest, 0, 4)
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("读取上游请求体失败: %v", err)
+		}
+		current := seenRequest{
+			previousResponseID: gjson.GetBytes(bodyBytes, "previous_response_id").String(),
+			inputCount:         gjson.GetBytes(bodyBytes, "input.#").Int(),
+		}
+		seen = append(seen, current)
+
+		w.Header().Set("Content-Type", "application/json")
+		switch len(seen) {
+		case 1:
+			if current.previousResponseID != "" {
+				t.Fatalf("首轮请求不应带 previous_response_id，实际: %q", current.previousResponseID)
+			}
+			_, _ = w.Write([]byte(`{"id":"resp_chain_1","object":"response","usage":{"input_tokens":12,"output_tokens":3}}`))
+		case 2:
+			if current.previousResponseID != "resp_chain_1" {
+				t.Fatalf("第二轮首次尝试 previous_response_id = %q, want %q", current.previousResponseID, "resp_chain_1")
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"detail":"Unsupported parameter: previous_response_id"}`))
+		case 3:
+			if current.previousResponseID != "" {
+				t.Fatalf("第二轮回退重试不应带 previous_response_id，实际: %q", current.previousResponseID)
+			}
+			if current.inputCount != 2 {
+				t.Fatalf("第二轮回退重试应发送完整 input，实际条数: %d", current.inputCount)
+			}
+			_, _ = w.Write([]byte(`{"id":"resp_chain_2","object":"response","usage":{"input_tokens":18,"output_tokens":4}}`))
+		case 4:
+			if current.previousResponseID != "" {
+				t.Fatalf("禁用后后续请求不应再带 previous_response_id，实际: %q", current.previousResponseID)
+			}
+			if current.inputCount != 3 {
+				t.Fatalf("禁用后后续请求应发送完整 input，实际条数: %d", current.inputCount)
+			}
+			_, _ = w.Write([]byte(`{"id":"resp_chain_3","object":"response","usage":{"input_tokens":24,"output_tokens":5}}`))
+		default:
+			t.Fatalf("上游命中次数异常: %d", len(seen))
+		}
+	}))
+	defer upstreamServer.Close()
+
+	providerService := NewProviderService()
+	settingsService := &SettingsService{}
+	blacklistService := NewBlacklistService(settingsService, nil)
+
+	testProvider := Provider{
+		ID:                        1,
+		Name:                      "right.codes (副本)",
+		APIURL:                    upstreamServer.URL,
+		APIKey:                    "test-api-key",
+		Enabled:                   true,
+		Level:                     1,
+		CodexResponseChainEnabled: true,
+	}
+
+	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	router := gin.New()
+	relayService.registerRoutes(router)
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.1","input":[{"role":"user","content":"hello"}]}`))
+	firstReq.Header.Set("Content-Type", "application/json")
+	firstReq.Header.Set(codexResponseChainSessionHeader, "unsupported-prev-session")
+	firstResp := httptest.NewRecorder()
+	router.ServeHTTP(firstResp, firstReq)
+	if firstResp.Code != http.StatusOK {
+		t.Fatalf("首轮请求期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, firstResp.Code, firstResp.Body.String())
+	}
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.1","input":[{"role":"user","content":"hello"},{"role":"user","content":"world"}]}`))
+	secondReq.Header.Set("Content-Type", "application/json")
+	secondReq.Header.Set(codexResponseChainSessionHeader, "unsupported-prev-session")
+	secondResp := httptest.NewRecorder()
+	router.ServeHTTP(secondResp, secondReq)
+	if secondResp.Code != http.StatusOK {
+		t.Fatalf("第二轮请求期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, secondResp.Code, secondResp.Body.String())
+	}
+
+	thirdReq := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.1","input":[{"role":"user","content":"hello"},{"role":"user","content":"world"},{"role":"user","content":"again"}]}`))
+	thirdReq.Header.Set("Content-Type", "application/json")
+	thirdReq.Header.Set(codexResponseChainSessionHeader, "unsupported-prev-session")
+	thirdResp := httptest.NewRecorder()
+	router.ServeHTTP(thirdResp, thirdReq)
+	if thirdResp.Code != http.StatusOK {
+		t.Fatalf("第三轮请求期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, thirdResp.Code, thirdResp.Body.String())
+	}
+
+	if len(seen) != 4 {
+		t.Fatalf("上游命中次数 = %d, want 4", len(seen))
 	}
 }
 

@@ -27,6 +27,7 @@ type codexResponseChainState struct {
 	ToolsRaw           json.RawMessage
 	InstructionsHash   string
 	ToolSchemaHash     string
+	Disabled           bool
 	LastSeen           time.Time
 }
 
@@ -62,6 +63,9 @@ func newCodexResponseChainStore() *codexResponseChainStore {
 
 func prepareCodexResponseChain(provider Provider, endpoint string, headers map[string]string, body []byte) ([]byte, codexResponseChainPlan, error) {
 	if !isCodexResponseChainEligibleEndpoint(endpoint) {
+		return body, codexResponseChainPlan{}, nil
+	}
+	if !provider.CodexResponseChainEnabled {
 		return body, codexResponseChainPlan{}, nil
 	}
 
@@ -133,6 +137,16 @@ func prepareCodexResponseChain(provider Provider, endpoint string, headers map[s
 		}
 		state.ToolsRaw = append(json.RawMessage(nil), prevState.ToolsRaw...)
 		state.ToolSchemaHash = shortStableHash(string(state.ToolsRaw))
+	}
+	if prevState.Disabled {
+		state.Disabled = true
+		plan := codexResponseChainPlan{
+			Active:     true,
+			SessionKey: sessionKey,
+			Namespace:  namespace,
+			State:      state,
+		}
+		return nextBody, plan, nil
 	}
 
 	if !codexResponseChainModelsCompatible(prevState.Model, model) || prevState.LastResponseID == "" || !hasInput {
@@ -461,6 +475,49 @@ func persistCodexResponseChain(plan codexResponseChainPlan, responseID string) {
 	state.LastResponseID = responseID
 	state.LastSeen = codexResponseChainNow().UTC()
 	globalCodexResponseChainStore.Set(plan.Namespace, state)
+}
+
+func disableCodexResponseChain(plan codexResponseChainPlan) codexResponseChainPlan {
+	if !plan.Active || strings.TrimSpace(plan.Namespace) == "" {
+		return plan
+	}
+
+	plan.State.Disabled = true
+	plan.State.LastResponseID = ""
+	plan.State.LastSeen = codexResponseChainNow().UTC()
+	globalCodexResponseChainStore.Set(plan.Namespace, plan.State)
+	return plan
+}
+
+func rebuildCodexResponseChainFallbackBody(originalBody []byte, plan codexResponseChainPlan) ([]byte, error) {
+	nextBody := originalBody
+	var err error
+
+	nextBody, err = ensureCodexResponseStore(nextBody)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(plan.State.InstructionsRaw) > 0 && !gjson.GetBytes(nextBody, "instructions").Exists() {
+		nextBody, err = setCodexResponseChainRawField(nextBody, "instructions", plan.State.InstructionsRaw)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(plan.State.ToolsRaw) > 0 && !gjson.GetBytes(nextBody, "tools").Exists() {
+		nextBody, err = setCodexResponseChainRawField(nextBody, "tools", plan.State.ToolsRaw)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if gjson.GetBytes(nextBody, "previous_response_id").Exists() {
+		nextBody, err = sjson.DeleteBytes(nextBody, "previous_response_id")
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return nextBody, nil
 }
 
 func (s *codexResponseChainStore) Get(namespace string) (codexResponseChainState, bool) {

@@ -18,6 +18,8 @@ export type AutomationCard = {
   maxConcurrentRequests?: number
   // Codex Prompt Cache：为 Responses 请求注入稳定 cache key
   codexPromptCacheEnabled?: boolean
+  // Codex Response Chain：允许在 follow-up /responses 请求中注入 previous_response_id
+  codexResponseChainEnabled?: boolean
   // API 端点路径（可选）：覆盖平台默认端点
   apiEndpoint?: string
   // CLI 配置：存储供应商关联的 CLI 可编辑配置
