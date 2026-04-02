@@ -106,6 +106,128 @@ func TestResponsesCompactRoute(t *testing.T) {
 	}
 }
 
+func TestCodexPrefixedResponsesRoute(t *testing.T) {
+	isolateHomeDir(t)
+	gin.SetMode(gin.TestMode)
+
+	upstreamHit := false
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHit = true
+
+		if r.Method != http.MethodPost {
+			t.Errorf("期望 POST 请求，收到 %s", r.Method)
+		}
+		if r.URL.Path != "/v1/responses" {
+			t.Errorf("期望转发路径 /v1/responses，收到 %s", r.URL.Path)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"resp_codex_prefix","object":"response","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer upstreamServer.Close()
+
+	providerService := NewProviderService()
+	settingsService := &SettingsService{}
+	blacklistService := NewBlacklistService(settingsService, nil)
+
+	testProvider := Provider{
+		ID:                        1,
+		Name:                      "TestCodexProvider",
+		APIURL:                    upstreamServer.URL,
+		APIKey:                    "test-api-key",
+		Enabled:                   true,
+		Level:                     1,
+		CodexResponseChainEnabled: true,
+	}
+
+	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	router := gin.New()
+	relayService.registerRoutes(router)
+
+	body := strings.NewReader(`{"model":"gpt-4.1","input":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/codex/responses", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code == http.StatusNotFound {
+		t.Fatalf("/codex/responses 不应返回 404，响应体: %s", w.Body.String())
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+	if !upstreamHit {
+		t.Fatal("期望命中 Codex 转发流程并请求上游，但实际上未命中")
+	}
+}
+
+func TestCodexPrefixedResponsesCompactRoute(t *testing.T) {
+	isolateHomeDir(t)
+	gin.SetMode(gin.TestMode)
+
+	upstreamHit := false
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHit = true
+
+		if r.Method != http.MethodPost {
+			t.Errorf("期望 POST 请求，收到 %s", r.Method)
+		}
+		if r.URL.Path != "/v1/responses/compact" {
+			t.Errorf("期望转发路径 /v1/responses/compact，收到 %s", r.URL.Path)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"resp_codex_prefix_compact","object":"response","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer upstreamServer.Close()
+
+	providerService := NewProviderService()
+	settingsService := &SettingsService{}
+	blacklistService := NewBlacklistService(settingsService, nil)
+
+	testProvider := Provider{
+		ID:                        1,
+		Name:                      "TestCodexProvider",
+		APIURL:                    upstreamServer.URL,
+		APIKey:                    "test-api-key",
+		Enabled:                   true,
+		Level:                     1,
+		CodexResponseChainEnabled: true,
+	}
+
+	if err := providerService.SaveProviders("codex", []Provider{testProvider}); err != nil {
+		t.Fatalf("保存 provider 配置失败: %v", err)
+	}
+
+	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	router := gin.New()
+	relayService.registerRoutes(router)
+
+	body := strings.NewReader(`{"model":"gpt-4.1","input":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/codex/responses/compact", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code == http.StatusNotFound {
+		t.Fatalf("/codex/responses/compact 不应返回 404，响应体: %s", w.Body.String())
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("期望状态码 %d，收到 %d，响应体: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+	if !upstreamHit {
+		t.Fatal("期望命中 Codex 转发流程并请求上游，但实际上未命中")
+	}
+}
+
 func TestV1ResponsesCompactRoute(t *testing.T) {
 	isolateHomeDir(t)
 	gin.SetMode(gin.TestMode)

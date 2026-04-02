@@ -246,7 +246,7 @@ func (prs *ProviderRelayService) registerRoutes(router gin.IRouter) {
 	router.POST("/:providerName/v1/messages", prs.proxyHandler("claude", "/v1/messages"))
 
 	// OpenAI Responses API-compatible routes (Codex / OpenAI Gateway)
-	// Keep both "/responses" and "/v1/responses" to match different client base_url behaviors.
+	// Keep "/responses", "/v1/responses", and "/codex/responses" to match different client base_url behaviors.
 	router.POST("/v1/responses", prs.proxyHandler("codex", "/v1/responses"))
 	router.POST("/v1/responses/compact", prs.proxyHandler("codex", "/v1/responses/compact"))
 	router.POST("/:providerName/v1/responses", prs.proxyHandler("codex", "/v1/responses"))
@@ -256,6 +256,11 @@ func (prs *ProviderRelayService) registerRoutes(router gin.IRouter) {
 	router.POST("/responses/compact", prs.proxyHandler("codex", "/v1/responses/compact"))
 	router.POST("/:providerName/responses", prs.proxyHandler("codex", "/v1/responses"))
 	router.POST("/:providerName/responses/compact", prs.proxyHandler("codex", "/v1/responses/compact"))
+
+	router.POST("/codex/responses", prs.proxyHandler("codex", "/v1/responses"))
+	router.POST("/codex/responses/compact", prs.proxyHandler("codex", "/v1/responses/compact"))
+	router.POST("/:providerName/codex/responses", prs.proxyHandler("codex", "/v1/responses"))
+	router.POST("/:providerName/codex/responses/compact", prs.proxyHandler("codex", "/v1/responses/compact"))
 
 	// /v1/models 端点（OpenAI-compatible API）
 	// 默认走 Codex 平台（OpenAI/GPT 风格）
