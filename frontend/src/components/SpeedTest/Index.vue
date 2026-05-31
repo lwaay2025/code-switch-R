@@ -564,6 +564,9 @@ onActivated(() => {
 }
 
 .badge-codex {
+  background-color: #3b82f6;
+  color: white;
+}
 
 :global(.dark) .source-badge {
   opacity: 0.9;
