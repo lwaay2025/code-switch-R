@@ -379,7 +379,6 @@ import { extractErrorMessage } from '../../utils/error'
 const props = defineProps<{
   platform: CLIPlatform
   modelValue?: Record<string, any>
-  // Gemini 供应商配置（用于预览"激活后"的 .env 内容）
   providerConfig?: {
     apiKey?: string
     baseUrl?: string
@@ -433,7 +432,6 @@ const lockedFieldKeys = computed(() => {
 const platformLabels: Record<CLIPlatform, string> = {
   claude: 'Claude Code',
   codex: 'Codex',
-  gemini: 'Gemini',
 }
 
 const platformLabel = computed(() => platformLabels[props.platform] || props.platform)
@@ -454,15 +452,6 @@ const lockedFields = computed(() => {
 
     return fields.map(field => {
       const newField = { ...field }
-
-      if (props.platform === 'gemini') {
-        if (field.key === 'GEMINI_API_KEY' && apiKey) {
-          newField.value = apiKey
-        }
-        if (field.key === 'GOOGLE_GEMINI_BASE_URL' && baseUrl) {
-          newField.value = baseUrl
-        }
-      }
 
       if (props.platform === 'claude') {
         if (field.key === 'env.ANTHROPIC_BASE_URL' && baseUrl) {

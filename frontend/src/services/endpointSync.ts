@@ -1,18 +1,17 @@
 /**
  * 端点同步服务
- * 从 Claude、Codex、Gemini 三个平台获取供应商 API 端点
+ * 从 Claude、Codex 两个平台获取供应商 API 端点
  * @author sm
  */
 
 import { LoadProviders } from '../../bindings/codeswitch/services/providerservice'
-import { GetProviders as GetGeminiProviders } from '../../bindings/codeswitch/services/geminiservice'
 
 /**
  * 同步的端点数据结构
  */
 export interface SyncedEndpoint {
   url: string                              // 标准化的基础 URL
-  source: 'claude' | 'codex' | 'gemini'   // 来源平台
+  source: 'claude' | 'codex'              // 来源平台
   providerName: string                     // 供应商名称
 }
 
@@ -90,28 +89,7 @@ export async function fetchAllProviderEndpoints(): Promise<SyncedEndpoint[]> {
     console.error('获取 Codex 供应商失败:', error)
   }
 
-  try {
-    // 3. 获取 Gemini 供应商
-    const geminiProviders = await GetGeminiProviders()
-    if (Array.isArray(geminiProviders)) {
-      geminiProviders.forEach((p: any) => {
-        if (p.baseUrl && p.baseUrl.trim()) {
-          const baseUrl = extractBaseUrl(p.baseUrl)
-          if (baseUrl) {
-            endpoints.push({
-              url: baseUrl,
-              source: 'gemini',
-              providerName: p.name || 'Gemini Provider'
-            })
-          }
-        }
-      })
-    }
-  } catch (error) {
-    console.error('获取 Gemini 供应商失败:', error)
-  }
-
-  // 4. 去重：相同 URL 只保留第一个
+  // 3. 去重：相同 URL 只保留第一个
   const uniqueEndpoints = new Map<string, SyncedEndpoint>()
   endpoints.forEach(ep => {
     if (!uniqueEndpoints.has(ep.url)) {

@@ -76,7 +76,6 @@ func NewConnectivityTestService(
 		results: map[string]map[int64]*ConnectivityResult{
 			"claude": {},
 			"codex":  {},
-			"gemini": {},
 		},
 		autoTestEnabled: false,
 	}
@@ -227,7 +226,6 @@ func (cts *ConnectivityTestService) buildTestRequest(platform string, provider *
 	defaults := map[string]string{
 		"claude": "claude-haiku-4-5-20251001",
 		"codex":  "gpt-5.1",
-		"gemini": "gemini-2.5-flash",
 	}
 
 	model := strings.TrimSpace(provider.ConnectivityTestModel)
@@ -597,7 +595,7 @@ func (cts *ConnectivityTestService) stopAutoTest() {
 // runAllPlatformTests 执行所有平台的测试
 func (cts *ConnectivityTestService) runAllPlatformTests() {
 	// 仅轮询 ProviderService 支持的平台，避免无意义的错误日志
-	// Gemini 使用独立的 GeminiService，暂未接入
+
 	platforms := []string{"claude", "codex"}
 	for _, platform := range platforms {
 		cts.TestAll(platform)

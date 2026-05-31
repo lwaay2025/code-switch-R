@@ -41,7 +41,6 @@
     "prompts": "Prompts",
     "mcp": "MCP",
     "skill": "Skills",
-    "gemini": "Gemini",
     "availability": "Availability",
     "speedtest": "Speed Test",
     "env": "Env Check",
@@ -117,7 +116,7 @@
     "hero": {
       "eyebrow": "Prompt Manager",
       "title": "Manage System Prompts",
-      "lead": "Configure custom system prompts for Claude Code, Codex, and Gemini to enhance your AI coding assistant."
+      "lead": "Configure custom system prompts for Claude Code and Codex to enhance your AI coding assistant."
     },
     "stats": {
       "total": "{count} prompts total",
@@ -203,6 +202,24 @@
           "wildcard": "Wildcard mapping, auto expands claude-sonnet-4 → anthropic/claude-sonnet-4",
           "prefix": "Prefix mapping"
         }
+      },
+      "pricingOverrides": {
+        "label": "Pricing Overrides",
+        "tooltip": "Override default pricing by model name. Unset fields fall back to the global model defaults.",
+        "modelPlaceholder": "Enter model name, e.g. gpt-5 or claude-sonnet-4",
+        "addModel": "Add pricing override",
+        "removeModel": "Remove pricing override",
+        "fields": {
+          "input": "Input price",
+          "output": "Output price",
+          "reasoning": "Reasoning output price",
+          "cacheWrite5m": "Cache write (5m)",
+          "cacheWrite1h": "Cache write (1h)",
+          "cacheRead": "Cache read",
+          "input128k": "128k+ input price",
+          "input200k": "200k+ input price",
+          "output200k": "200k+ output price"
+        }
       }
     },
     "main": {
@@ -233,7 +250,6 @@
         "label": "Claude proxy",
         "hostClaude": "Host Claude Code",
         "hostCodex": "Host Codex",
-        "hostGemini": "Host Gemini CLI",
         "hostOthers": "Host Custom CLI",
         "tooltip": "Route traffic through the local relay to manage API keys centrally.",
         "statusOn": "Managed",
@@ -283,7 +299,6 @@
         "settings": "Open settings",
         "mcp": "Open MCP panel",
         "skill": "Open skill catalog",
-        "gemini": "Open Gemini CLI manager",
         "import": "Import cc-switch config",
         "duplicate": "Duplicate provider"
       },

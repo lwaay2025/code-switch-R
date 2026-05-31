@@ -58,7 +58,6 @@ func main() {
 		defaults := map[string]string{
 			"claude": "claude-haiku-4-5-20251001",
 			"codex":  "gpt-5.1",
-			"gemini": "gemini-2.5-flash",
 		}
 		effectiveModel = defaults[strings.ToLower(platform)]
 	}

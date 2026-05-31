@@ -1060,12 +1060,11 @@ import BaseModal from '../common/BaseModal.vue'
 import BaseInput from '../common/BaseInput.vue'
 import ModelWhitelistEditor from '../common/ModelWhitelistEditor.vue'
 import ModelMappingEditor from '../common/ModelMappingEditor.vue'
+import PricingOverridesEditor from '../common/PricingOverridesEditor.vue'
 import CLIConfigEditor from '../common/CLIConfigEditor.vue'
 import CustomCliConfigEditor from '../common/CustomCliConfigEditor.vue'
 import { LoadProviders, SaveProviders, DuplicateProvider } from '../../../bindings/codeswitch/services/providerservice'
-import { GetProviders as GetGeminiProviders, UpdateProvider as UpdateGeminiProvider, AddProvider as AddGeminiProvider, DeleteProvider as DeleteGeminiProvider, ReorderProviders as ReorderGeminiProviders } from '../../../bindings/codeswitch/services/geminiservice'
 import { fetchProxyStatus, enableProxy, disableProxy } from '../../services/claudeSettings'
-import { fetchGeminiProxyStatus, enableGeminiProxy, disableGeminiProxy } from '../../services/geminiSettings'
 import { fetchHeatmapStats, fetchProviderDailyStats, type ProviderDailyStat } from '../../services/logs'
 import { fetchCurrentVersion } from '../../services/version'
 import { fetchAppSettings, type AppSettings } from '../../services/appSettings'
@@ -1124,19 +1123,16 @@ const tooltipRef = ref<HTMLElement | null>(null)
 const proxyStates = reactive<Record<ProviderTab, boolean>>({
   claude: false,
   codex: false,
-  gemini: false,
   others: false,
 })
 const proxyBaseURLs = reactive<Record<ProviderTab, string>>({
   claude: '',
   codex: '',
-  gemini: '',
   others: '',
 })
 const proxyBusy = reactive<Record<ProviderTab, boolean>>({
   claude: false,
   codex: false,
-  gemini: false,
   others: false,
 })
 
@@ -1144,7 +1140,6 @@ const proxyBusy = reactive<Record<ProviderTab, boolean>>({
 const directAppliedIds = reactive<Record<ProviderTab, string | number | null>>({
   claude: null,
   codex: null,
-  gemini: null,
   others: null,
 })
 
@@ -1157,8 +1152,6 @@ const refreshDirectAppliedStatus = async (tab: ProviderTab = activeTab.value) =>
       id = await Call.ByName('codeswitch/services.ClaudeSettingsService.GetDirectAppliedProviderID')
     } else if (tab === 'codex') {
       id = await Call.ByName('codeswitch/services.CodexSettingsService.GetDirectAppliedProviderID')
-    } else if (tab === 'gemini') {
-      id = await Call.ByName('codeswitch/services.GeminiService.GetDirectAppliedProviderID')
     }
     directAppliedIds[tab] = id
   } catch (error) {
@@ -1174,12 +1167,6 @@ const handleDirectApply = async (card: AutomationCard) => {
       await Call.ByName('codeswitch/services.ClaudeSettingsService.ApplySingleProvider', card.id)
     } else if (tab === 'codex') {
       await Call.ByName('codeswitch/services.CodexSettingsService.ApplySingleProvider', card.id)
-    } else if (tab === 'gemini') {
-      // Gemini 使用字符串 ID，需要从 cache 中找到原始 provider
-      const index = cards.gemini.findIndex(c => c.id === card.id)
-      if (index === -1 || !geminiProvidersCache.value[index]) return
-      const realId = geminiProvidersCache.value[index].id
-      await Call.ByName('codeswitch/services.GeminiService.ApplySingleProvider', realId)
     }
     await refreshDirectAppliedStatus(tab)
     showToast(t('components.main.directApply.success', { name: card.name }), 'success')
@@ -1620,6 +1607,7 @@ const cardToGemini = (card: AutomationCard, original: GeminiProvider): GeminiPro
 const serializeProviders = (providers: AutomationCard[]) =>
   providers.map((provider) => ({
     ...provider,
+    pricingOverrides: provider.pricingOverrides ?? {},
     maxConcurrentRequests: normalizeMaxConcurrentRequests(provider.maxConcurrentRequests),
     codexPromptCacheEnabled: !!provider.codexPromptCacheEnabled,
     codexResponseChainEnabled: !!provider.codexResponseChainEnabled,

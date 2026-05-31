@@ -393,7 +393,7 @@ func (ls *LogService) HeatmapStats(days int) ([]HeatmapStat, error) {
 			CacheCreateTokens: cacheCreate,
 			CacheReadTokens:   cacheRead,
 		}
-		cost := ls.calculateCost(record.GetString("model"), usage)
+		cost := ls.calculateCost(record.GetString("provider"), record.GetString("model"), usage)
 		bucket.TotalCost += cost.TotalCost
 	}
 	if len(hourBuckets) == 0 {
@@ -528,7 +528,7 @@ func (ls *LogService) StatsSince(platform string) (LogStats, error) {
 			CacheCreateTokens: cacheCreate,
 			CacheReadTokens:   cacheRead,
 		}
-		cost := ls.calculateCost(record.GetString("model"), usage)
+		cost := ls.calculateCost(record.GetString("provider"), record.GetString("model"), usage)
 
 		bucket.TotalRequests++
 		bucket.InputTokens += int64(input)
@@ -660,7 +660,7 @@ func (ls *LogService) ProviderDailyStats(platform string) ([]ProviderDailyStat, 
 			CacheCreateTokens: cacheCreate,
 			CacheReadTokens:   cacheRead,
 		}
-		cost := ls.calculateCost(record.GetString("model"), usage)
+		cost := ls.calculateCost(record.GetString("provider"), record.GetString("model"), usage)
 		stat.TotalRequests++
 		// 只有 HTTP 200-299 且 output_tokens > 0 才算成功
 		if httpCode >= 200 && httpCode < 300 && output > 0 {
@@ -804,7 +804,7 @@ func (ls *LogService) StatsOnDate(platform string, date string) (LogStats, error
 			CacheCreateTokens: cacheCreate,
 			CacheReadTokens:   cacheRead,
 		}
-		cost := ls.calculateCost(record.GetString("model"), usage)
+		cost := ls.calculateCost(record.GetString("provider"), record.GetString("model"), usage)
 
 		bucket.TotalRequests++
 		bucket.InputTokens += int64(input)
@@ -938,7 +938,7 @@ func (ls *LogService) ProviderDailyStatsOnDate(platform string, date string) ([]
 			CacheCreateTokens: cacheCreate,
 			CacheReadTokens:   cacheRead,
 		}
-		cost := ls.calculateCost(record.GetString("model"), usage)
+		cost := ls.calculateCost(record.GetString("provider"), record.GetString("model"), usage)
 
 		stat.TotalRequests++
 		if httpCode >= 200 && httpCode < 300 && output > 0 {
@@ -993,7 +993,7 @@ func (ls *LogService) decorateCost(logEntry *ReqeustLog) {
 		CacheCreateTokens: logEntry.CacheCreateTokens,
 		CacheReadTokens:   logEntry.CacheReadTokens,
 	}
-	cost := ls.pricing.CalculateCost(logEntry.Model, usage)
+	cost := ls.calculateCost(logEntry.Provider, logEntry.Model, usage)
 	logEntry.HasPricing = cost.HasPricing
 	logEntry.InputCost = cost.InputCost
 	logEntry.OutputCost = cost.OutputCost
@@ -1005,11 +1005,73 @@ func (ls *LogService) decorateCost(logEntry *ReqeustLog) {
 	logEntry.TotalCost = cost.TotalCost
 }
 
-func (ls *LogService) calculateCost(model string, usage modelpricing.UsageSnapshot) modelpricing.CostBreakdown {
+func (ls *LogService) calculateCost(provider string, model string, usage modelpricing.UsageSnapshot) modelpricing.CostBreakdown {
 	if ls == nil || ls.pricing == nil {
 		return modelpricing.CostBreakdown{}
 	}
+	if overrideProvider := buildLogPricingOverrideProvider(provider); overrideProvider != nil {
+		return ls.pricing.CalculateCostWithOverride(model, usage, overrideProvider)
+	}
 	return ls.pricing.CalculateCost(model, usage)
+}
+
+type logPricingOverrideProvider struct {
+	overrides map[string]modelpricing.PricingEntry
+}
+
+func (p *logPricingOverrideProvider) PricingOverrideForModel(model string) (modelpricing.PricingEntry, bool) {
+	if p == nil || len(p.overrides) == 0 {
+		return modelpricing.PricingEntry{}, false
+	}
+	if entry, ok := p.overrides[model]; ok {
+		return entry, true
+	}
+	return modelpricing.PricingEntry{}, false
+}
+
+func buildLogPricingOverrideProvider(providerName string) modelpricing.PricingOverrideProvider {
+	trimmed := strings.TrimSpace(providerName)
+	if trimmed == "" {
+		return nil
+	}
+	provider, ok := loadProviderPricingOverride(trimmed)
+	if !ok {
+		return nil
+	}
+	return provider
+}
+
+func loadProviderPricingOverride(providerName string) (*logPricingOverrideProvider, bool) {
+	for _, kind := range []string{"claude", "codex"} {
+		providers, err := NewProviderService().LoadProviders(kind)
+		if err != nil {
+			continue
+		}
+		for _, provider := range providers {
+			if !strings.EqualFold(strings.TrimSpace(provider.Name), providerName) {
+				continue
+			}
+			if len(provider.PricingOverrides) == 0 {
+				return nil, false
+			}
+			overrides := make(map[string]modelpricing.PricingEntry, len(provider.PricingOverrides))
+			for model, override := range provider.PricingOverrides {
+				overrides[model] = modelpricing.PricingEntry{
+					InputCostPerToken:                   override.InputCostPerToken,
+					OutputCostPerToken:                  override.OutputCostPerToken,
+					OutputCostPerReasoningToken:         override.OutputCostPerReasoningToken,
+					CacheCreationInputTokenCost:         override.CacheCreationInputTokenCost,
+					CacheCreationInputTokenCostAbove1Hr: override.CacheCreationInputTokenCostAbove1Hr,
+					CacheReadInputTokenCost:             override.CacheReadInputTokenCost,
+					InputCostPerTokenAbove200k:          override.InputCostPerTokenAbove200k,
+					InputCostPerTokenAbove128k:          override.InputCostPerTokenAbove128k,
+					OutputCostPerTokenAbove200k:         override.OutputCostPerTokenAbove200k,
+				}
+			}
+			return &logPricingOverrideProvider{overrides: overrides}, true
+		}
+	}
+	return nil, false
 }
 
 func parseDateRange(date string) (time.Time, time.Time, error) {

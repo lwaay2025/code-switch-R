@@ -118,8 +118,7 @@ func main() {
 	appSettings := services.NewAppSettingsService(autoStartService)
 	notificationService := services.NewNotificationService(appSettings) // 通知服务
 	blacklistService := services.NewBlacklistService(settingsService, notificationService)
-	geminiService := services.NewGeminiService("127.0.0.1:18100")
-	providerRelay := services.NewProviderRelayService(providerService, geminiService, blacklistService, notificationService, ":18100")
+	providerRelay := services.NewProviderRelayService(providerService, blacklistService, notificationService, ":18100")
 	claudeSettings := services.NewClaudeSettingsService(providerRelay.Addr())
 	codexSettings := services.NewCodexSettingsService(providerRelay.Addr())
 	cliConfigService := services.NewCliConfigService(providerRelay.Addr())
@@ -142,7 +141,7 @@ func main() {
 	versionService := NewVersionService()
 	consoleService := services.NewConsoleService()
 	customCliService := services.NewCustomCliService(providerRelay.Addr())
-	networkService := services.NewNetworkService(providerRelay.Addr(), claudeSettings, codexSettings, geminiService)
+	networkService := services.NewNetworkService(providerRelay.Addr(), claudeSettings, codexSettings)
 
 	// 应用待处理的更新
 	go func() {
@@ -241,7 +240,6 @@ func main() {
 			application.NewService(healthCheckService),
 			application.NewService(dockService),
 			application.NewService(versionService),
-			application.NewService(geminiService),
 			application.NewService(consoleService),
 			application.NewService(customCliService),
 			application.NewService(networkService),

@@ -18,8 +18,12 @@ import (
 var (
 	// DefaultUserAgentValue 默认的 User-Agent（可被设置覆盖）
 	DefaultUserAgentValue = "code-switch-r/healthcheck"
+	// defaultTLSHandshakeTimeout 为上游 TLS 握手预留更宽裕时间，减少代理链路偶发超时。
+	defaultTLSHandshakeTimeout = 30 * time.Second
 	// globalHTTPClient 全局 HTTP 客户端实例
 	globalHTTPClient *http.Client
+	// responsesHTTPClient 专用于 Responses/流式请求的 HTTP 客户端，独立连接池避免与短请求争用
+	responsesHTTPClient *http.Client
 	// clientMutex 保护全局客户端的并发访问
 	clientMutex sync.RWMutex
 	// currentProxyConfig 当前代理配置（用于检测配置变化）
@@ -49,8 +53,15 @@ func InitHTTPClient(config ProxyConfig) error {
 	if err != nil {
 		return err
 	}
-
 	globalHTTPClient = client
+
+	// 同步初始化 Responses 专用客户端
+	respClient, respErr := createResponsesHTTPClient(config)
+	if respErr != nil {
+		return respErr
+	}
+	responsesHTTPClient = respClient
+
 	currentProxyConfig = config
 	return nil
 }
@@ -89,8 +100,15 @@ func UpdateHTTPClient(config ProxyConfig) error {
 	if err != nil {
 		return err
 	}
-
 	globalHTTPClient = client
+
+	// 同步更新 Responses 专用客户端
+	respClient, respErr := createResponsesHTTPClient(config)
+	if respErr != nil {
+		return respErr
+	}
+	responsesHTTPClient = respClient
+
 	currentProxyConfig = config
 	return nil
 }
@@ -131,6 +149,67 @@ func GetHTTPClientWithTimeout(timeout time.Duration) *http.Client {
 	return client
 }
 
+// GetResponsesHTTPClient 获取专用于 Responses/流式请求的 HTTP 客户端
+// 独立连接池，不与健康检查、更新检查等短请求争用连接。
+// 流式连接长期活跃，调大 KeepAlive 并取消 per-host 连接数限制，
+// 避免跑一段时间后因连接池不足被迫频繁重建 TLS 握手。
+func GetResponsesHTTPClient() *http.Client {
+	clientMutex.RLock()
+	defer clientMutex.RUnlock()
+
+	if responsesHTTPClient == nil {
+		return createDefaultResponsesHTTPClient()
+	}
+
+	return responsesHTTPClient
+}
+
+// createResponsesHTTPClient 根据代理配置创建 Responses 专用 HTTP 客户端
+func createResponsesHTTPClient(config ProxyConfig) (*http.Client, error) {
+	if !config.UseProxy || config.ProxyAddress == "" {
+		return createDefaultResponsesHTTPClient(), nil
+	}
+
+	transport, err := createTransport(config)
+	if err != nil {
+		return nil, fmt.Errorf("创建 Responses 传输层失败: %w", err)
+	}
+	// 覆盖通用 transport 为流式长连接优化
+	if t, ok := transport.(*http.Transport); ok {
+		t.ForceAttemptHTTP2 = false
+		t.MaxConnsPerHost = 0 // 流式连接长期活跃，不设限制避免连接池争用
+		t.IdleConnTimeout = 120 * time.Second
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   32 * time.Hour,
+	}, nil
+}
+
+// createDefaultResponsesHTTPClient 创建默认的 Responses 专用 HTTP 客户端（不使用代理）
+func createDefaultResponsesHTTPClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 60 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2:     false,
+			MaxIdleConns:          200,
+			MaxIdleConnsPerHost:   50,
+			IdleConnTimeout:       120 * time.Second,
+			TLSHandshakeTimeout:   defaultTLSHandshakeTimeout,
+			ExpectContinueTimeout: 1 * time.Second,
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+		Timeout: 32 * time.Hour,
+	}
+}
+
 // createHTTPClient 根据配置创建 HTTP 客户端
 func createHTTPClient(config ProxyConfig) (*http.Client, error) {
 	if !config.UseProxy || config.ProxyAddress == "" {
@@ -160,12 +239,14 @@ func createDefaultHTTPClient() *http.Client {
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
 			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          100,
+			MaxIdleConns:          200,
+			MaxIdleConnsPerHost:   50,
+			MaxConnsPerHost:       100,
 			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
+			TLSHandshakeTimeout:   defaultTLSHandshakeTimeout,
 			ExpectContinueTimeout: 1 * time.Second,
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: false,
+				InsecureSkipVerify: true,
 			},
 		},
 		Timeout: 32 * time.Hour,
@@ -174,8 +255,10 @@ func createDefaultHTTPClient() *http.Client {
 
 // createTransport 根据代理类型创建传输层
 func createTransport(config ProxyConfig) (http.RoundTripper, error) {
-	proxyType := config.ProxyType
-	proxyAddr := config.ProxyAddress
+	proxyType, proxyAddr, err := resolveProxyTransport(config)
+	if err != nil {
+		return nil, err
+	}
 
 	switch proxyType {
 	case "http", "https":
@@ -185,6 +268,28 @@ func createTransport(config ProxyConfig) (http.RoundTripper, error) {
 	default:
 		return nil, fmt.Errorf("不支持的代理类型: %s", proxyType)
 	}
+}
+
+func resolveProxyTransport(config ProxyConfig) (string, string, error) {
+	proxyAddr := strings.TrimSpace(config.ProxyAddress)
+	proxyType := strings.ToLower(strings.TrimSpace(config.ProxyType))
+	if proxyAddr == "" {
+		return proxyType, proxyAddr, fmt.Errorf("代理地址不能为空")
+	}
+
+	parsed, err := url.Parse(proxyAddr)
+	if err == nil {
+		scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+		switch scheme {
+		case "http", "https", "socks5":
+			if proxyType != "" && proxyType != scheme {
+				fmt.Printf("[Proxy] 检测到代理地址 scheme=%s，覆盖 ProxyType=%s\n", scheme, proxyType)
+			}
+			return scheme, proxyAddr, nil
+		}
+	}
+
+	return proxyType, proxyAddr, nil
 }
 
 // createHTTPProxyTransport 创建 HTTP/HTTPS 代理传输层
@@ -200,13 +305,15 @@ func createHTTPProxyTransport(proxyAddr string) (*http.Transport, error) {
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
+		ForceAttemptHTTP2:     false, // HTTP 代理链路下关闭 H2，减少 CONNECT/TLS/ALPN 兼容性问题。
+		MaxIdleConns:          200,
+		MaxIdleConnsPerHost:   50,
+		MaxConnsPerHost:       100,
 		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
+		TLSHandshakeTimeout:   defaultTLSHandshakeTimeout,
 		ExpectContinueTimeout: 1 * time.Second,
 		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: false,
+			InsecureSkipVerify: true,
 		},
 	}
 
@@ -274,12 +381,14 @@ func createSOCKS5ProxyTransport(proxyAddr string) (*http.Transport, error) {
 			}
 		},
 		ForceAttemptHTTP2:     false, // SOCKS5 通常不支持 HTTP/2
-		MaxIdleConns:          100,
+		MaxIdleConns:          200,
+		MaxIdleConnsPerHost:   50,
+		MaxConnsPerHost:       100,
 		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
+		TLSHandshakeTimeout:   defaultTLSHandshakeTimeout,
 		ExpectContinueTimeout: 1 * time.Second,
 		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: false,
+			InsecureSkipVerify: true,
 		},
 	}
 

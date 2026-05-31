@@ -32,7 +32,7 @@ type SwitchNotification struct {
 	FromProvider string // 原供应商
 	ToProvider   string // 新供应商
 	Reason       string // 切换原因
-	Platform     string // 平台：claude/codex/gemini
+	Platform     string // 平台：claude/codex
 }
 
 // NewNotificationService 创建通知服务

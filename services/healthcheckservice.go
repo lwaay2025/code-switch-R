@@ -116,7 +116,6 @@ func NewHealthCheckService(
 		latestResults: map[string]map[int64]*HealthCheckResult{
 			"claude": {},
 			"codex":  {},
-			"gemini": {},
 		},
 		pollInterval: time.Duration(DefaultPollIntervalSeconds) * time.Second,
 	}
@@ -178,7 +177,7 @@ func (hcs *HealthCheckService) GetLatestResults() (map[string][]ProviderTimeline
 	results := make(map[string][]ProviderTimeline)
 
 	// 遍历所有平台
-	for _, platform := range []string{"claude", "codex", "gemini"} {
+	for _, platform := range []string{"claude", "codex"} {
 		providers, err := hcs.providerService.LoadProviders(platform)
 		if err != nil {
 			log.Printf("[HealthCheck] 加载 %s 供应商失败: %v", platform, err)
@@ -441,7 +440,7 @@ func (hcs *HealthCheckService) RunSingleCheck(platform string, providerID int64)
 func (hcs *HealthCheckService) RunAllChecks() (map[string][]HealthCheckResult, error) {
 	results := make(map[string][]HealthCheckResult)
 
-	for _, platform := range []string{"claude", "codex", "gemini"} {
+	for _, platform := range []string{"claude", "codex"} {
 		platformResults := hcs.checkAllProviders(platform)
 		results[platform] = platformResults
 	}
@@ -724,8 +723,6 @@ func (hcs *HealthCheckService) getEffectiveModel(provider *Provider, platform st
 		return "claude-3-5-haiku-20241022"
 	case "codex":
 		return "gpt-4o-mini"
-	case "gemini":
-		return "gemini-1.5-flash"
 	default:
 		return "gpt-3.5-turbo"
 	}

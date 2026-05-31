@@ -132,7 +132,6 @@ func TestModelMappingEndToEnd(t *testing.T) {
 			"anthropic/claude-sonnet-4":     true,
 			"anthropic/claude-opus-4":       true,
 			"openai/gpt-4":                  true,
-			"google/gemini-pro":             true,
 			"meta-llama/llama-3.1-405b":     true,
 			"anthropic/claude-3.5-sonnet":   true,
 			"anthropic/claude-3.5-haiku":    true,
@@ -140,7 +139,6 @@ func TestModelMappingEndToEnd(t *testing.T) {
 		ModelMapping: map[string]string{
 			"claude-*":                     "anthropic/claude-*",
 			"gpt-*":                        "openai/gpt-*",
-			"gemini-*":                     "google/gemini-*",
 			"llama-*":                      "meta-llama/llama-*",
 		},
 	}
@@ -156,7 +154,6 @@ func TestModelMappingEndToEnd(t *testing.T) {
 		{"claude-3.5-sonnet", true, "anthropic/claude-3.5-sonnet"},
 		{"gpt-4", true, "openai/gpt-4"},
 		{"gpt-4-turbo", true, "openai/gpt-4-turbo"},
-		{"gemini-pro", true, "google/gemini-pro"},
 		{"llama-3.1-405b", true, "meta-llama/llama-3.1-405b"},
 
 		// 不支持的模型

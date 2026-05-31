@@ -56,6 +56,10 @@ type Provider struct {
 	// 默认关闭；第一轮请求始终不会注入 previous_response_id。
 	CodexResponseChainEnabled bool `json:"codexResponseChainEnabled,omitempty"`
 
+	// 供应商级价格覆盖：按 model 名覆盖默认模型价格。
+	// 未填写的字段继续回退到全局 model 默认价格。
+	PricingOverrides map[string]ProviderPricingOverride `json:"pricingOverrides,omitempty"`
+
 	// ========== 可用性监控字段（新增 v0.5.0） ==========
 
 	// 可用性监控开关 - 在可用性页面配置
@@ -88,6 +92,18 @@ type Provider struct {
 
 	// 内部字段：配置验证错误（不持久化）
 	configErrors []string `json:"-"`
+}
+
+type ProviderPricingOverride struct {
+	InputCostPerToken                   float64 `json:"input_cost_per_token,omitempty"`
+	OutputCostPerToken                  float64 `json:"output_cost_per_token,omitempty"`
+	OutputCostPerReasoningToken         float64 `json:"output_cost_per_reasoning_token,omitempty"`
+	CacheCreationInputTokenCost         float64 `json:"cache_creation_input_token_cost,omitempty"`
+	CacheCreationInputTokenCostAbove1Hr float64 `json:"cache_creation_input_token_cost_above_1hr,omitempty"`
+	CacheReadInputTokenCost             float64 `json:"cache_read_input_token_cost,omitempty"`
+	InputCostPerTokenAbove200k          float64 `json:"input_cost_per_token_above_200k_tokens,omitempty"`
+	InputCostPerTokenAbove128k          float64 `json:"input_cost_per_token_above_128k_tokens,omitempty"`
+	OutputCostPerTokenAbove200k         float64 `json:"output_cost_per_token_above_200k_tokens,omitempty"`
 }
 
 type providerEnvelope struct {
@@ -440,6 +456,12 @@ func (ps *ProviderService) DuplicateProvider(kind string, sourceID int64) (*Prov
 		cloned.ModelMapping = make(map[string]string, len(source.ModelMapping))
 		for k, v := range source.ModelMapping {
 			cloned.ModelMapping[k] = v
+		}
+	}
+	if source.PricingOverrides != nil {
+		cloned.PricingOverrides = make(map[string]ProviderPricingOverride, len(source.PricingOverrides))
+		for k, v := range source.PricingOverrides {
+			cloned.PricingOverrides[k] = v
 		}
 	}
 

@@ -12,6 +12,18 @@ export type AutomationCard = {
   supportedModels?: Record<string, boolean>
   // 模型映射：external model -> internal model
   modelMapping?: Record<string, string>
+  // 价格覆盖：按模型名覆盖默认价格
+  pricingOverrides?: Record<string, {
+    input_cost_per_token?: number
+    output_cost_per_token?: number
+    output_cost_per_reasoning_token?: number
+    cache_creation_input_token_cost?: number
+    cache_creation_input_token_cost_above_1hr?: number
+    cache_read_input_token_cost?: number
+    input_cost_per_token_above_200k_tokens?: number
+    input_cost_per_token_above_128k_tokens?: number
+    output_cost_per_token_above_200k_tokens?: number
+  }>
   // 优先级分组：数字越小优先级越高（1-10，默认 1）
   level?: number
   // 单供应商最大并发请求数：0 表示不限制

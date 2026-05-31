@@ -24,7 +24,6 @@ type Prompt struct {
 type PromptConfig struct {
 	Claude map[string]Prompt `json:"claude"`
 	Codex  map[string]Prompt `json:"codex"`
-	Gemini map[string]Prompt `json:"gemini"`
 }
 
 // PromptService 提示词管理服务
@@ -39,7 +38,6 @@ func NewPromptService() *PromptService {
 		config: PromptConfig{
 			Claude: make(map[string]Prompt),
 			Codex:  make(map[string]Prompt),
-			Gemini: make(map[string]Prompt),
 		},
 	}
 	_ = svc.load()
@@ -66,8 +64,6 @@ func (s *PromptService) GetPrompts(platform string) (map[string]Prompt, error) {
 		return s.deepCopyMap(s.config.Claude), nil
 	case "codex":
 		return s.deepCopyMap(s.config.Codex), nil
-	case "gemini":
-		return s.deepCopyMap(s.config.Gemini), nil
 	default:
 		return nil, fmt.Errorf("不支持的平台: %s", platform)
 	}
@@ -325,8 +321,6 @@ func (s *PromptService) getPromptsForPlatform(platform string) (*map[string]Prom
 		return &s.config.Claude, nil
 	case "codex":
 		return &s.config.Codex, nil
-	case "gemini":
-		return &s.config.Gemini, nil
 	default:
 		return nil, fmt.Errorf("不支持的平台: %s", platform)
 	}
@@ -347,9 +341,6 @@ func (s *PromptService) getPromptFilePath(platform string) (string, error) {
 	case "codex":
 		dir = filepath.Join(home, ".codex")
 		filename = "AGENTS.md"
-	case "gemini":
-		dir = filepath.Join(home, ".gemini")
-		filename = "GEMINI.md"
 	default:
 		return "", fmt.Errorf("不支持的平台: %s", platform)
 	}

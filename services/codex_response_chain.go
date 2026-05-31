@@ -87,7 +87,7 @@ func prepareCodexResponseChain(provider Provider, endpoint string, headers map[s
 		return body, codexResponseChainPlan{}, err
 	}
 
-	currentInputRaw, currentInputCanonical, currentInputType, hasInput := extractCodexResponseChainInput(body)
+	_, currentInputCanonical, currentInputType, _ := extractCodexResponseChainInput(body)
 	model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 
 	state := codexResponseChainState{
@@ -111,74 +111,8 @@ func prepareCodexResponseChain(provider Provider, endpoint string, headers map[s
 		return nextBody, plan, nil
 	}
 
-	prevState, ok := globalCodexResponseChainStore.Get(namespace)
-	if !ok {
-		plan := codexResponseChainPlan{
-			Active:     true,
-			SessionKey: sessionKey,
-			Namespace:  namespace,
-			State:      state,
-		}
-		return nextBody, plan, nil
-	}
-
-	if len(state.InstructionsRaw) == 0 && len(prevState.InstructionsRaw) > 0 {
-		nextBody, err = setCodexResponseChainRawField(nextBody, "instructions", prevState.InstructionsRaw)
-		if err != nil {
-			return body, codexResponseChainPlan{}, err
-		}
-		state.InstructionsRaw = append(json.RawMessage(nil), prevState.InstructionsRaw...)
-		state.InstructionsHash = shortStableHash(string(state.InstructionsRaw))
-	}
-	if len(state.ToolsRaw) == 0 && len(prevState.ToolsRaw) > 0 {
-		nextBody, err = setCodexResponseChainRawField(nextBody, "tools", prevState.ToolsRaw)
-		if err != nil {
-			return body, codexResponseChainPlan{}, err
-		}
-		state.ToolsRaw = append(json.RawMessage(nil), prevState.ToolsRaw...)
-		state.ToolSchemaHash = shortStableHash(string(state.ToolsRaw))
-	}
-	if prevState.Disabled {
-		state.Disabled = true
-		plan := codexResponseChainPlan{
-			Active:     true,
-			SessionKey: sessionKey,
-			Namespace:  namespace,
-			State:      state,
-		}
-		return nextBody, plan, nil
-	}
-
-	if !codexResponseChainModelsCompatible(prevState.Model, model) || prevState.LastResponseID == "" || !hasInput {
-		plan := codexResponseChainPlan{
-			Active:     true,
-			SessionKey: sessionKey,
-			Namespace:  namespace,
-			State:      state,
-		}
-		return nextBody, plan, nil
-	}
-
-	suffixRaw, diffOK := buildCodexResponseChainInputSuffix(prevState.LastInputCanonical, currentInputRaw)
-	if !diffOK {
-		plan := codexResponseChainPlan{
-			Active:     true,
-			SessionKey: sessionKey,
-			Namespace:  namespace,
-			State:      state,
-		}
-		return nextBody, plan, nil
-	}
-
-	nextBody, err = sjson.SetBytes(nextBody, "previous_response_id", prevState.LastResponseID)
-	if err != nil {
-		return body, codexResponseChainPlan{}, err
-	}
-	nextBody, err = sjson.SetRawBytes(nextBody, "input", suffixRaw)
-	if err != nil {
-		return body, codexResponseChainPlan{}, err
-	}
-
+	// 改为按 provider 显式启用：即使 store/session 已建立，也不再默认自动注入 previous_response_id。
+	// 只有客户端显式携带 previous_response_id 时，才允许继续沿用 response chain 上下文。
 	plan := codexResponseChainPlan{
 		Active:     true,
 		SessionKey: sessionKey,

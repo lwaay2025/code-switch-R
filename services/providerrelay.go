@@ -20,6 +20,28 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// GeminiProvider Gemini 供应商配置 - 已废弃，保留兼容
+type GeminiProvider struct {
+	Level int    `json:"level,omitempty"`
+	Name  string `json:"name"`
+	BaseURL string `json:"baseUrl,omitempty"`
+	Enabled bool   `json:"enabled"`
+	APIKey  string `json:"apiKey,omitempty"`
+}
+
+// GeminiService Gemini 配置管理服务 - 已废弃，保留兼容
+type GeminiService struct{}
+
+// NewGeminiService 创建 Gemini 服务 - 已废弃，保留兼容
+func NewGeminiService(relayAddr string) *GeminiService {
+	return &GeminiService{}
+}
+
+// GetProviders 获取已配置的供应商列表 - 已废弃
+func (s *GeminiService) GetProviders() []GeminiProvider {
+	return nil
+}
+
 // LastUsedProvider 最后使用的供应商信息
 // @author sm
 type LastUsedProvider struct {
@@ -30,7 +52,6 @@ type LastUsedProvider struct {
 
 type ProviderRelayService struct {
 	providerService     *ProviderService
-	geminiService       *GeminiService
 	blacklistService    *BlacklistService
 	notificationService *NotificationService
 	concurrencyManager  *ProviderConcurrencyManager
@@ -45,6 +66,39 @@ var errClientAbort = errors.New("client aborted, skip failure count")
 
 // errTokenZero 表示上游返回 2xx，但解析到 output_tokens=0（视为失败）
 var errTokenZero = errors.New("output_tokens is 0")
+
+// errProviderBusy 表示本地并发限制触发，不应计入 provider 失败次数
+var errProviderBusy = errors.New("provider is busy")
+
+type singleProviderRetryResult struct {
+	ok              bool
+	err             error
+	responseWritten bool
+	attempts        int
+}
+
+func retrySameProvider(maxRetryPerProvider int, retryWaitSeconds int, fn func(attempt int) (bool, error, bool)) singleProviderRetryResult {
+	if maxRetryPerProvider < 1 {
+		maxRetryPerProvider = 1
+	}
+
+	result := singleProviderRetryResult{}
+	for attempt := 0; attempt < maxRetryPerProvider; attempt++ {
+		ok, err, responseWritten := fn(attempt)
+		result.ok = ok
+		result.err = err
+		result.responseWritten = responseWritten
+		result.attempts = attempt + 1
+
+		if ok || responseWritten || errors.Is(err, errClientAbort) || errors.Is(err, errProviderBusy) {
+			return result
+		}
+		if attempt < maxRetryPerProvider-1 && retryWaitSeconds > 0 {
+			time.Sleep(time.Duration(retryWaitSeconds) * time.Second)
+		}
+	}
+	return result
+}
 
 func isResponsesCompactVariantEndpoint(endpoint string) bool {
 	lowerEndpoint := strings.ToLower(strings.TrimSpace(endpoint))
@@ -95,7 +149,7 @@ func isLikelyClientAbortErr(c *gin.Context, err error) bool {
 	return false
 }
 
-func NewProviderRelayService(providerService *ProviderService, geminiService *GeminiService, blacklistService *BlacklistService, notificationService *NotificationService, addr string) *ProviderRelayService {
+func NewProviderRelayService(providerService *ProviderService, blacklistService *BlacklistService, notificationService *NotificationService, addr string) *ProviderRelayService {
 	if addr == "" {
 		addr = "127.0.0.1:18100" // 【安全修复】仅监听本地回环地址，防止 API Key 暴露到局域网
 	}
@@ -105,7 +159,6 @@ func NewProviderRelayService(providerService *ProviderService, geminiService *Ge
 
 	return &ProviderRelayService{
 		providerService:     providerService,
-		geminiService:       geminiService,
 		blacklistService:    blacklistService,
 		notificationService: notificationService,
 		concurrencyManager:  NewProviderConcurrencyManager(),
@@ -113,7 +166,6 @@ func NewProviderRelayService(providerService *ProviderService, geminiService *Ge
 		lastUsed: map[string]*LastUsedProvider{
 			"claude": nil,
 			"codex":  nil,
-			"gemini": nil,
 		},
 	}
 }
@@ -265,10 +317,6 @@ func (prs *ProviderRelayService) registerRoutes(router gin.IRouter) {
 	// /v1/models 端点（OpenAI-compatible API）
 	// 默认走 Codex 平台（OpenAI/GPT 风格）
 	router.GET("/v1/models", prs.modelsHandler("codex"))
-
-	// Gemini API 端点（使用专门的路径前缀避免与 Claude 冲突）
-	router.POST("/gemini/v1beta/*any", prs.geminiProxyHandler("/v1beta"))
-	router.POST("/gemini/v1/*any", prs.geminiProxyHandler("/v1"))
 
 	// 自定义 CLI 工具端点（路由格式: /custom/:toolId/v1/messages）
 	// toolId 用于区分不同的 CLI 工具，对应 provider kind 为 "custom:{toolId}"
@@ -924,9 +972,7 @@ func (prs *ProviderRelayService) forwardRequest(
 		}
 	}()
 
-	resp, err := executeUpstreamRequest(targetURL, headers, query, bodyBytes)
-
-	// 无论成功失败，先尝试记录 HttpCode
+	resp, err := executeUpstreamRequest(targetURL, headers, query, bodyBytes, kind, endpoint)
 	if resp != nil {
 		requestLog.HttpCode = resp.StatusCode()
 	}
@@ -968,7 +1014,7 @@ func (prs *ProviderRelayService) forwardRequest(
 			requestLog.codexPromptCacheFingerprint = promptCachePlan.Fingerprint
 		}
 
-		resp, err = executeUpstreamRequest(targetURL, retryHeaders, query, retryBody)
+		resp, err = executeUpstreamRequest(targetURL, retryHeaders, query, retryBody, kind, endpoint)
 		requestLog.HttpCode = 0
 		if resp != nil {
 			requestLog.HttpCode = resp.StatusCode()
@@ -1098,18 +1144,35 @@ func (prs *ProviderRelayService) forwardRequest(
 	return false, fmt.Errorf("upstream status %d", status), false
 }
 
-func executeUpstreamRequest(targetURL string, headers map[string]string, query map[string]string, bodyBytes []byte) (*xrequest.Response, error) {
+func executeUpstreamRequest(targetURL string, headers map[string]string, query map[string]string, bodyBytes []byte, kind string, endpoint string) (*xrequest.Response, error) {
+	// 流式 /responses 请求走专用 client，避免和短请求争用连接池
+	client := GetHTTPClient()
+	if kind == "codex" && strings.Contains(strings.ToLower(strings.TrimSpace(endpoint)), "/responses") {
+		client = GetResponsesHTTPClient()
+	}
+
 	req := xrequest.New().
-		SetClient(GetHTTPClient()).
+		SetClient(client).
 		SetHeaders(headers).
 		SetQueryParams(query).
-		SetRetry(1, 500*time.Millisecond).
 		SetTimeout(32 * time.Hour) // 32小时超时，适配超大型项目分析
+
+	// 流式及 /responses 请求跳过自动重试，避免多次重建 TLS 加重握手超时
+	if shouldEnableUpstreamRetry(kind, endpoint) {
+		req = req.SetRetry(1, 500*time.Millisecond)
+	}
 
 	reqBody := bytes.NewReader(bodyBytes)
 	req = req.SetBody(reqBody)
 
 	return req.Post(targetURL)
+}
+
+func shouldEnableUpstreamRetry(kind string, endpoint string) bool {
+	if kind == "codex" && strings.Contains(strings.ToLower(strings.TrimSpace(endpoint)), "/responses") {
+		return false
+	}
+	return true
 }
 
 func cloneHeaders(header http.Header) map[string]string {
@@ -1633,472 +1696,15 @@ func ReplaceModelInRequestBody(bodyBytes []byte, newModel string) ([]byte, error
 	return modified, nil
 }
 
-// geminiProxyHandler 处理 Gemini API 请求（支持 Level 分组降级和黑名单）
+// geminiProxyHandler 处理 Gemini API 请求 - 已移除
 func (prs *ProviderRelayService) geminiProxyHandler(apiVersion string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 获取完整路径（例如 /v1beta/models/gemini-2.5-pro:generateContent）
-		fullPath := c.Param("any")
-		endpoint := apiVersion + fullPath
-
-		// 保留查询参数（如 ?alt=sse, ?key= 等）
-		query := c.Request.URL.RawQuery
-		if query != "" {
-			endpoint = endpoint + "?" + query
-		}
-
-		fmt.Printf("[Gemini] 收到请求: %s\n", endpoint)
-
-		// 读取请求体
-		var bodyBytes []byte
-		if c.Request.Body != nil {
-			data, err := io.ReadAll(c.Request.Body)
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
-				return
-			}
-			bodyBytes = data
-			c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		}
-
-		// 判断是否为流式请求
-		isStream := strings.Contains(endpoint, ":streamGenerateContent") || strings.Contains(query, "alt=sse")
-
-		// 加载 Gemini providers
-		providers := prs.geminiService.GetProviders()
-		if len(providers) == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "no gemini providers configured"})
-			return
-		}
-
-		// 1. 过滤可用的 providers（启用 + BaseURL 配置 + 未被拉黑）
-		var activeProviders []GeminiProvider
-		for _, p := range providers {
-			if !p.Enabled || p.BaseURL == "" {
-				continue
-			}
-			// 检查黑名单
-			if isBlacklisted, until := prs.blacklistService.IsBlacklisted("gemini", p.Name); isBlacklisted {
-				fmt.Printf("[Gemini] ⛔ Provider %s 已拉黑，过期时间: %v\n", p.Name, until.Format("15:04:05"))
-				continue
-			}
-			// Level 默认值处理
-			if p.Level <= 0 {
-				p.Level = 1
-			}
-			activeProviders = append(activeProviders, p)
-		}
-
-		if len(activeProviders) == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "no active gemini provider (all disabled or blacklisted)"})
-			return
-		}
-
-		// 2. 按 Level 分组
-		levelGroups := make(map[int][]GeminiProvider)
-		for _, p := range activeProviders {
-			levelGroups[p.Level] = append(levelGroups[p.Level], p)
-		}
-
-		// 获取排序后的 Level 列表
-		var sortedLevels []int
-		for level := range levelGroups {
-			sortedLevels = append(sortedLevels, level)
-		}
-		sort.Ints(sortedLevels)
-
-		fmt.Printf("[Gemini] 共 %d 个 Level 分组: %v\n", len(sortedLevels), sortedLevels)
-
-		// 请求日志
-		requestLog := &ReqeustLog{
-			Platform:     "gemini",
-			IsStream:     isStream,
-			InputTokens:  0,
-			OutputTokens: 0,
-		}
-		start := time.Now()
-
-		// 保存日志的 defer
-		defer func() {
-			requestLog.DurationSec = time.Since(start).Seconds()
-			if GlobalDBQueueLogs == nil {
-				return
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = GlobalDBQueueLogs.ExecBatchCtx(ctx, `
-				INSERT INTO request_log (
-					platform, model, provider, http_code,
-					input_tokens, output_tokens, cache_create_tokens, cache_read_tokens,
-					reasoning_tokens, is_stream, duration_sec
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			`,
-				requestLog.Platform, requestLog.Model, requestLog.Provider, requestLog.HttpCode,
-				requestLog.InputTokens, requestLog.OutputTokens, requestLog.CacheCreateTokens,
-				requestLog.CacheReadTokens, requestLog.ReasoningTokens,
-				boolToInt(requestLog.IsStream), requestLog.DurationSec,
-			)
-		}()
-
-		// 获取拉黑功能开关状态
-		blacklistEnabled := prs.blacklistService.ShouldUseFixedMode()
-
-		// 【拉黑模式】：同 Provider 内重试（maxRetryPerProvider），失败按“整组重试”计数后切换到下一个 Provider
-		if blacklistEnabled {
-			fmt.Printf("[Gemini] 🔒 拉黑模式已开启（同 Provider 内重试，失败按组计数后切换）\n")
-
-			// 获取重试配置
-			retryConfig := prs.blacklistService.GetRetryConfig()
-			maxRetryPerProvider := retryConfig.MaxRetryPerProvider
-			retryWaitSeconds := retryConfig.RetryWaitSeconds
-			fmt.Printf("[Gemini] 重试配置: 每 Provider 最多 %d 次重试，间隔 %d 秒\n",
-				maxRetryPerProvider, retryWaitSeconds)
-
-			var lastError string
-			var lastProvider string
-			totalAttempts := 0
-			busySkipped := 0
-			attemptedUpstream := false
-
-			// 遍历所有 Level 和 Provider
-			for _, level := range sortedLevels {
-				providersInLevel := levelGroups[level]
-				fmt.Printf("[Gemini] === 尝试 Level %d（%d 个 provider）===\n", level, len(providersInLevel))
-
-				for _, provider := range providersInLevel {
-					// 检查是否已被拉黑（跳过已拉黑的 provider）
-					if blacklisted, until := prs.blacklistService.IsBlacklisted("gemini", provider.Name); blacklisted {
-						fmt.Printf("[Gemini] ⏭️ 跳过已拉黑的 Provider: %s (解禁时间: %v)\n", provider.Name, until)
-						continue
-					}
-
-					// 预填日志
-					requestLog.Provider = provider.Name
-					requestLog.Model = provider.Model
-
-					// 同 Provider 内重试循环
-					attemptedCount := 0
-					stoppedEarlyDueToConcurrency := false
-					var lastAttemptErrMsg string
-					for attempt := 0; attempt < maxRetryPerProvider; attempt++ {
-						// 再次检查是否已被拉黑（重试过程中可能被拉黑）
-						if blacklisted, _ := prs.blacklistService.IsBlacklisted("gemini", provider.Name); blacklisted {
-							fmt.Printf("[Gemini] 🚫 Provider %s 已被拉黑，切换到下一个\n", provider.Name)
-							break
-						}
-
-						fmt.Printf("[Gemini] [拉黑模式] Provider: %s (Level %d) | 重试 %d/%d\n",
-							provider.Name, level, attempt+1, maxRetryPerProvider)
-
-						release, acquired := prs.concurrencyManager.TryAcquire(
-							providerConcurrencyKey("gemini", provider.Name),
-							provider.MaxConcurrentRequests,
-						)
-						if !acquired {
-							busySkipped++
-							fmt.Printf("[Gemini] ⏭️ Provider %s 达到并发上限(%d)，跳过到下一个\n", provider.Name, provider.MaxConcurrentRequests)
-							stoppedEarlyDueToConcurrency = true
-							break
-						}
-
-						totalAttempts++
-						attemptedCount++
-						attemptedUpstream = true
-						ok, errMsg, responseWritten := prs.forwardGeminiRequest(c, &provider, endpoint, bodyBytes, isStream, requestLog)
-						release()
-						if ok {
-							fmt.Printf("[Gemini] ✓ 成功: %s | 重试 %d 次\n", provider.Name, attempt+1)
-							_ = prs.blacklistService.RecordSuccess("gemini", provider.Name)
-							prs.setLastUsedProvider("gemini", provider.Name)
-							return
-						}
-
-						// 【关键修复】如果响应已写入客户端，不能重试或降级，直接返回
-						if responseWritten {
-							fmt.Printf("[Gemini] ⚠️ 响应已部分写入，无法重试: %s | 错误: %s\n", provider.Name, errMsg)
-							_ = prs.blacklistService.RecordFailure("gemini", provider.Name)
-							return
-						}
-
-						// 失败处理
-						lastAttemptErrMsg = errMsg
-
-						fmt.Printf("[Gemini] ✗ 失败: %s | 重试 %d/%d | 错误: %s\n",
-							provider.Name, attempt+1, maxRetryPerProvider, errMsg)
-
-						// 等待后重试（除非是最后一次）
-						if attempt < maxRetryPerProvider-1 {
-							fmt.Printf("[Gemini] ⏳ 等待 %d 秒后重试...\n", retryWaitSeconds)
-							time.Sleep(time.Duration(retryWaitSeconds) * time.Second)
-						}
-					}
-
-					if stoppedEarlyDueToConcurrency {
-						continue
-					}
-
-					// 同 Provider 重试已耗尽：仅计为 1 次失败（用于累加 FailureThreshold）
-					if attemptedCount > 0 {
-						lastError = lastAttemptErrMsg
-						lastProvider = provider.Name
-						_ = prs.blacklistService.RecordFailure("gemini", provider.Name)
-					}
-				}
-			}
-
-			// 所有 Provider 都失败或被拉黑
-			fmt.Printf("[Gemini] 💥 拉黑模式：所有 Provider 都失败或被拉黑（共尝试 %d 次）\n", totalAttempts)
-
-			if !attemptedUpstream && busySkipped > 0 {
-				requestLog.HttpCode = http.StatusTooManyRequests
-				c.JSON(http.StatusTooManyRequests, gin.H{
-					"error":          "all gemini providers are busy",
-					"mode":           "concurrency_limit",
-					"busy_providers": busySkipped,
-				})
-				return
-			}
-
-			if requestLog.HttpCode == 0 {
-				requestLog.HttpCode = http.StatusBadGateway
-			}
-			c.JSON(http.StatusBadGateway, gin.H{
-				"error":         fmt.Sprintf("所有 Provider 都失败或被拉黑，最后尝试: %s - %s", lastProvider, lastError),
-				"lastProvider":  lastProvider,
-				"totalAttempts": totalAttempts,
-				"mode":          "blacklist_retry",
-				"hint":          "拉黑模式已开启，同 Provider 内重试失败按组计数后切换。如需立即降级请关闭拉黑功能",
-			})
-			return
-		}
-
-		// 【降级模式】：按 Level 顺序尝试所有 provider
-		var lastError string
-		busySkipped := 0
-		attemptedUpstream := false
-		for _, level := range sortedLevels {
-			providersInLevel := levelGroups[level]
-			fmt.Printf("[Gemini] === 尝试 Level %d（%d 个 provider）===\n", level, len(providersInLevel))
-
-			for idx, provider := range providersInLevel {
-				fmt.Printf("[Gemini]   [%d/%d] Provider: %s\n", idx+1, len(providersInLevel), provider.Name)
-
-				// 预填日志，失败也能落库
-				requestLog.Provider = provider.Name
-				requestLog.Model = provider.Model
-
-				release, acquired := prs.concurrencyManager.TryAcquire(
-					providerConcurrencyKey("gemini", provider.Name),
-					provider.MaxConcurrentRequests,
-				)
-				if !acquired {
-					busySkipped++
-					fmt.Printf("[Gemini]   ⏭️ Provider %s 达到并发上限(%d)，跳过\n", provider.Name, provider.MaxConcurrentRequests)
-					continue
-				}
-
-				attemptedUpstream = true
-				ok, errMsg, responseWritten := prs.forwardGeminiRequest(c, &provider, endpoint, bodyBytes, isStream, requestLog)
-				release()
-				if ok {
-					_ = prs.blacklistService.RecordSuccess("gemini", provider.Name)
-					// 记录最后使用的供应商
-					prs.setLastUsedProvider("gemini", provider.Name)
-					fmt.Printf("[Gemini] ✓ 请求完成 | Provider: %s | 总耗时: %.2fs\n", provider.Name, time.Since(start).Seconds())
-					return // 成功，退出
-				}
-
-				// 【关键修复】如果响应已写入客户端，不能降级到其他 provider，直接返回
-				if responseWritten {
-					fmt.Printf("[Gemini] ⚠️ 响应已部分写入，无法降级: %s | 错误: %s\n", provider.Name, errMsg)
-					_ = prs.blacklistService.RecordFailure("gemini", provider.Name)
-					return
-				}
-
-				// 失败，记录并继续
-				lastError = errMsg
-				_ = prs.blacklistService.RecordFailure("gemini", provider.Name)
-			}
-
-			fmt.Printf("[Gemini] Level %d 的所有 %d 个 provider 均失败，尝试下一 Level\n", level, len(providersInLevel))
-		}
-
-		// 所有 Level 都失败
-		if !attemptedUpstream && busySkipped > 0 {
-			requestLog.HttpCode = http.StatusTooManyRequests
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":          "all gemini providers are busy",
-				"mode":           "concurrency_limit",
-				"busy_providers": busySkipped,
-			})
-			return
-		}
-
-		if requestLog.HttpCode == 0 {
-			requestLog.HttpCode = http.StatusBadGateway
-		}
-		c.JSON(http.StatusBadGateway, gin.H{
-			"error":   "all gemini providers failed",
-			"details": lastError,
-		})
-		fmt.Printf("[Gemini] ✗ 所有 provider 均失败 | 最后错误: %s\n", lastError)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Gemini API 不再支持"})
 	}
 }
 
-// extractGeminiModelFromEndpoint 从 Gemini API endpoint 中提取模型名
-// 例如 "/v1beta/models/gemini-2.5-pro:generateContent?alt=sse" -> "gemini-2.5-pro"
-func extractGeminiModelFromEndpoint(endpoint string) string {
-	if endpoint == "" {
-		return ""
-	}
-	// 移除查询参数
-	if qIdx := strings.Index(endpoint, "?"); qIdx >= 0 {
-		endpoint = endpoint[:qIdx]
-	}
-	// 查找 models/ 后面的部分
-	idx := strings.Index(endpoint, "models/")
-	if idx == -1 {
-		return ""
-	}
-	rest := endpoint[idx+len("models/"):]
-	if rest == "" {
-		return ""
-	}
-	// 移除动作部分（如 :generateContent, :streamGenerateContent）
-	if colonIdx := strings.Index(rest, ":"); colonIdx >= 0 {
-		rest = rest[:colonIdx]
-	}
-	return strings.TrimSpace(rest)
-}
-
-// forwardGeminiRequest 转发 Gemini 请求到指定 provider
-// 返回 (成功, 错误信息, 是否已写入响应)
-// 【重要】当 responseWritten=true 时，调用方不得重试或降级，因为响应头/数据已发送给客户端
-func (prs *ProviderRelayService) forwardGeminiRequest(
-	c *gin.Context,
-	provider *GeminiProvider,
-	endpoint string,
-	bodyBytes []byte,
-	isStream bool,
-	requestLog *ReqeustLog,
-) (success bool, errMsg string, responseWritten bool) {
-	providerStart := time.Now()
-
-	// 构建目标 URL
-	targetURL := strings.TrimSuffix(provider.BaseURL, "/") + endpoint
-
-	// 预先填充日志，保证失败也能记录 provider 和模型
-	requestLog.Provider = provider.Name
-	// 【修复】每次尝试开始前重置 HttpCode，避免重试时沿用上一次的状态码
-	requestLog.HttpCode = 0
-	requestLog.InputTokens = 0
-	requestLog.OutputTokens = 0
-	requestLog.CacheCreateTokens = 0
-	requestLog.CacheReadTokens = 0
-	requestLog.ReasoningTokens = 0
-	// 优先从 endpoint 提取模型名（如 gemini-2.5-pro），否则回退到 provider.Model
-	if extractedModel := extractGeminiModelFromEndpoint(endpoint); extractedModel != "" {
-		requestLog.Model = extractedModel
-	} else {
-		requestLog.Model = provider.Model
-	}
-
-	// 创建 HTTP 请求
-	req, err := http.NewRequest("POST", targetURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return false, fmt.Sprintf("创建请求失败: %v", err), false
-	}
-
-	// 复制请求头
-	for key, values := range c.Request.Header {
-		for _, value := range values {
-			req.Header.Add(key, value)
-		}
-	}
-
-	// 设置 API Key
-	if provider.APIKey != "" {
-		req.Header.Set("x-goog-api-key", provider.APIKey)
-	}
-
-	// 发送请求
-	client := &http.Client{Timeout: 300 * time.Second}
-	resp, err := client.Do(req)
-	providerDuration := time.Since(providerStart).Seconds()
-
-	if err != nil {
-		fmt.Printf("[Gemini]   ✗ 失败: %s | 错误: %v | 耗时: %.2fs\n", provider.Name, err, providerDuration)
-		return false, fmt.Sprintf("请求失败: %v", err), false
-	}
-	defer resp.Body.Close()
-
-	// 先记录上游状态码，失败场景也能落库
-	requestLog.HttpCode = resp.StatusCode
-
-	// 检查响应状态
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		errorBody, _ := io.ReadAll(resp.Body)
-		fmt.Printf("[Gemini]   ✗ 失败: %s | HTTP %d | 耗时: %.2fs\n", provider.Name, resp.StatusCode, providerDuration)
-		return false, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(errorBody)), false
-	}
-
-	fmt.Printf("[Gemini]   ✓ 连接成功: %s | HTTP %d | 耗时: %.2fs\n", provider.Name, resp.StatusCode, providerDuration)
-
-	// 处理响应
-	if isStream {
-		// 流式模式：先写 header 再流式传输
-		for key, values := range resp.Header {
-			for _, value := range values {
-				c.Header(key, value)
-			}
-		}
-		c.Status(resp.StatusCode)
-		c.Writer.Flush()
-		// 【重要】从 Flush() 开始，响应头已写入客户端，任何失败都不能重试
-		copyErr := streamGeminiResponseWithHook(resp.Body, c.Writer, requestLog)
-		if copyErr != nil {
-			fmt.Printf("[Gemini]   ⚠️ 流式传输中断: %s | 错误: %v\n", provider.Name, copyErr)
-			// 流式传输中断：已写入部分响应，客户端会收到不完整数据
-			return false, fmt.Sprintf("流式传输中断: %v", copyErr), true
-		}
-		if requestLog.OutputTokens == 0 {
-			return false, errTokenZero.Error(), true
-		}
-	} else {
-		// 非流式模式：先读完 body 再写 header（允许读取失败时重试）
-		body, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			fmt.Printf("[Gemini]   ⚠️ 读取响应失败: %s | 错误: %v\n", provider.Name, readErr)
-			// 【修复】此时 header 尚未写入客户端，可以重试/降级
-			return false, fmt.Sprintf("读取响应失败: %v", readErr), false
-		}
-		// 解析 Gemini 用量数据
-		parseGeminiUsageMetadata(body, requestLog)
-		if requestLog.OutputTokens == 0 {
-			return false, errTokenZero.Error(), false
-		}
-		// 读取成功后再写 header 和 body
-		for key, values := range resp.Header {
-			for _, value := range values {
-				c.Header(key, value)
-			}
-		}
-		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
-	}
-
-	return true, "", true
-}
-
-// parseGeminiUsageMetadata 从 Gemini 非流式响应中提取用量，填充 request_log
-// 复用 mergeGeminiUsageMetadata 统一解析逻辑
-func parseGeminiUsageMetadata(body []byte, reqLog *ReqeustLog) {
-	if len(body) == 0 || reqLog == nil {
-		return
-	}
-	usage := gjson.GetBytes(body, "usageMetadata")
-	if !usage.Exists() {
-		return
-	}
-	mergeGeminiUsageMetadata(usage, reqLog)
+func (prs *ProviderRelayService) forwardGeminiRequest(c *gin.Context, provider *GeminiProvider, endpoint string) {
+    c.JSON(http.StatusNotFound, gin.H{"error": "Gemini API 不再支持"})
 }
 
 // customCliProxyHandler 处理自定义 CLI 工具的 API 请求

@@ -41,7 +41,6 @@
     "prompts": "提示词",
     "mcp": "MCP",
     "skill": "技能",
-    "gemini": "Gemini",
     "availability": "可用性",
     "speedtest": "测速",
     "env": "环境",
@@ -117,7 +116,7 @@
     "hero": {
       "eyebrow": "提示词管理",
       "title": "管理系统提示词",
-      "lead": "为 Claude Code、Codex 和 Gemini 配置自定义系统提示词，增强 AI 编程助手的能力。"
+      "lead": "为 Claude Code 和 Codex 配置自定义系统提示词，增强 AI 编程助手的能力。"
     },
     "stats": {
       "total": "共 {count} 个提示词",
@@ -204,6 +203,24 @@
           "wildcard": "通配符映射，自动展开 claude-sonnet-4 → anthropic/claude-sonnet-4",
           "prefix": "前缀映射"
         }
+      },
+      "pricingOverrides": {
+        "label": "价格覆盖",
+        "tooltip": "按模型名覆盖默认价格。未填写的字段会回退到全局模型默认价格。",
+        "modelPlaceholder": "输入模型名，如 gpt-5 或 claude-sonnet-4",
+        "addModel": "添加模型价格覆盖",
+        "removeModel": "删除模型价格覆盖",
+        "fields": {
+          "input": "输入单价",
+          "output": "输出单价",
+          "reasoning": "推理输出单价",
+          "cacheWrite5m": "缓存写入（5m）",
+          "cacheWrite1h": "缓存写入（1h）",
+          "cacheRead": "缓存读取",
+          "input128k": "128k+ 输入单价",
+          "input200k": "200k+ 输入单价",
+          "output200k": "200k+ 输出单价"
+        }
       }
     },
     "main": {
@@ -234,7 +251,6 @@
         "label": "Claude proxy",
         "hostClaude": "托管 Claude Code",
         "hostCodex": "托管 Codex",
-        "hostGemini": "托管 Gemini CLI",
         "hostOthers": "托管自定义 CLI",
         "tooltip": "通过本地转发托管 API 访问，统一管理密钥与配额。",
         "statusOn": "已托管",
@@ -284,7 +300,6 @@
         "settings": "打开设置",
         "mcp": "打开 MCP 面板",
         "skill": "打开 Skill 列表",
-        "gemini": "打开 Gemini CLI 管理",
         "import": "导入 cc-switch 配置",
         "duplicate": "复制供应商"
       },

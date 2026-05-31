@@ -84,7 +84,7 @@ func TestResponsesCompactRoute(t *testing.T) {
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
 
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 	router := gin.New()
 	relayService.registerRoutes(router)
 
@@ -145,7 +145,7 @@ func TestCodexPrefixedResponsesRoute(t *testing.T) {
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
 
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 	router := gin.New()
 	relayService.registerRoutes(router)
 
@@ -206,7 +206,7 @@ func TestCodexPrefixedResponsesCompactRoute(t *testing.T) {
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
 
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 	router := gin.New()
 	relayService.registerRoutes(router)
 
@@ -267,7 +267,7 @@ func TestV1ResponsesCompactRoute(t *testing.T) {
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
 
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 	router := gin.New()
 	relayService.registerRoutes(router)
 
@@ -322,7 +322,7 @@ func TestResponsesCompactPassthroughWhenUsageMissing(t *testing.T) {
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
 
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 	router := gin.New()
 	relayService.registerRoutes(router)
 
@@ -403,7 +403,7 @@ func TestResponsesCompactStripsStoreAndStream(t *testing.T) {
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
 
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 	router := gin.New()
 	relayService.registerRoutes(router)
 
@@ -469,7 +469,7 @@ func TestCodexPromptCacheEnabledInjectsStableKeyAndHeaders(t *testing.T) {
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
 
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 	router := gin.New()
 	relayService.registerRoutes(router)
 
@@ -561,7 +561,7 @@ func TestCodexResponsesChainRewritesFollowUpRequests(t *testing.T) {
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
 
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 	router := gin.New()
 	relayService.registerRoutes(router)
 
@@ -595,23 +595,23 @@ func TestCodexResponsesChainRewritesFollowUpRequests(t *testing.T) {
 	if !seen[0].store {
 		t.Fatal("expected first request to force store=true")
 	}
-	if seen[1].previousResponseID != "resp_1" {
-		t.Fatalf("第二轮 previous_response_id = %q, want %q", seen[1].previousResponseID, "resp_1")
+	if seen[1].previousResponseID != "" {
+		t.Fatalf("第二轮 previous_response_id = %q, want empty (auto-inject disabled)", seen[1].previousResponseID)
 	}
 	if !seen[1].store {
 		t.Fatal("expected second request to keep store=true")
 	}
-	if seen[1].inputCount != 1 {
-		t.Fatalf("第二轮增量 input 条数 = %d, want 1", seen[1].inputCount)
+	if seen[1].inputCount != 2 {
+		t.Fatalf("第二轮 input 条数 = %d, want 2 (no rewrite)", seen[1].inputCount)
 	}
-	if seen[1].inputLastContent != "world" {
-		t.Fatalf("第二轮增量 content = %q, want %q", seen[1].inputLastContent, "world")
+	if seen[1].inputLastContent != "hello" {
+		t.Fatalf("第二轮 input[0].content = %q, want %q", seen[1].inputLastContent, "hello")
 	}
-	if seen[1].instructions != "system" {
-		t.Fatalf("第二轮 instructions = %q, want %q", seen[1].instructions, "system")
+	if seen[1].instructions != "" {
+		t.Fatalf("第二轮 instructions = %q, want empty (auto-inject disabled)", seen[1].instructions)
 	}
-	if seen[1].toolsCount != 1 {
-		t.Fatalf("第二轮 tools 数量 = %d, want 1", seen[1].toolsCount)
+	if seen[1].toolsCount != 0 {
+		t.Fatalf("第二轮 tools 数量 = %d, want 0 (auto-inject disabled)", seen[1].toolsCount)
 	}
 }
 
@@ -675,7 +675,7 @@ func TestCodexResponsesChainRewritesStreamingFollowUpRequests(t *testing.T) {
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
 
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 	router := gin.New()
 	relayService.registerRoutes(router)
 
@@ -711,17 +711,17 @@ func TestCodexResponsesChainRewritesStreamingFollowUpRequests(t *testing.T) {
 	if !seen[0].store {
 		t.Fatal("expected first streaming request to force store=true")
 	}
-	if seen[1].previousResponseID != "resp_stream_1" {
-		t.Fatalf("第二轮流式 previous_response_id = %q, want %q", seen[1].previousResponseID, "resp_stream_1")
+	if seen[1].previousResponseID != "" {
+		t.Fatalf("第二轮流式 previous_response_id = %q, want empty", seen[1].previousResponseID)
 	}
-	if seen[1].inputCount != 1 {
-		t.Fatalf("第二轮流式增量 input 条数 = %d, want 1", seen[1].inputCount)
+	if seen[1].inputCount != 2 {
+		t.Fatalf("第二轮流式 input 条数 = %d, want 2", seen[1].inputCount)
 	}
-	if seen[1].inputLastContent != "world" {
-		t.Fatalf("第二轮流式增量 content = %q, want %q", seen[1].inputLastContent, "world")
+	if seen[1].inputLastContent != "hello" {
+		t.Fatalf("第二轮流式 input[0].content = %q, want %q", seen[1].inputLastContent, "hello")
 	}
-	if seen[1].instructions != "system" {
-		t.Fatalf("第二轮流式 instructions = %q, want %q", seen[1].instructions, "system")
+	if seen[1].instructions != "" {
+		t.Fatalf("第二轮流式 instructions = %q, want empty", seen[1].instructions)
 	}
 }
 
@@ -787,7 +787,7 @@ func TestCodexResponsesChainUsesPromptCacheKeyForStreamingPiStyleReplay(t *testi
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
 
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 	router := gin.New()
 	relayService.registerRoutes(router)
 
@@ -824,20 +824,20 @@ func TestCodexResponsesChainUsesPromptCacheKeyForStreamingPiStyleReplay(t *testi
 	if seen[0].promptCacheKey != "pi-session-1" {
 		t.Fatalf("首轮 prompt_cache_key = %q, want %q", seen[0].promptCacheKey, "pi-session-1")
 	}
-	if seen[1].previousResponseID != "resp_pi_1" {
-		t.Fatalf("第二轮 previous_response_id = %q, want %q", seen[1].previousResponseID, "resp_pi_1")
+	if seen[1].previousResponseID != "" {
+		t.Fatalf("第二轮 previous_response_id = %q, want empty", seen[1].previousResponseID)
 	}
 	if !seen[1].store {
 		t.Fatal("expected second PI-style streaming request to keep store=true")
 	}
-	if seen[1].inputCount != 1 {
-		t.Fatalf("第二轮增量 input 条数 = %d, want 1", seen[1].inputCount)
+	if seen[1].inputCount != 2 {
+		t.Fatalf("第二轮 input 条数 = %d, want 2", seen[1].inputCount)
 	}
-	if seen[1].inputLastContent != "world" {
-		t.Fatalf("第二轮增量 content = %q, want %q", seen[1].inputLastContent, "world")
+	if seen[1].inputLastContent != "hello" {
+		t.Fatalf("第二轮 input[0].content = %q, want %q", seen[1].inputLastContent, "hello")
 	}
-	if seen[1].instructions != "system" {
-		t.Fatalf("第二轮 instructions = %q, want %q", seen[1].instructions, "system")
+	if seen[1].instructions != "" {
+		t.Fatalf("第二轮 instructions = %q, want empty", seen[1].instructions)
 	}
 	if seen[1].promptCacheKey != "pi-session-1" {
 		t.Fatalf("第二轮 prompt_cache_key = %q, want %q", seen[1].promptCacheKey, "pi-session-1")
@@ -906,7 +906,7 @@ func TestCodexResponsesChainTrimsReplayOnlyAssistantItemsForPiToolLoop(t *testin
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
 
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 	router := gin.New()
 	relayService.registerRoutes(router)
 
@@ -945,20 +945,20 @@ func TestCodexResponsesChainTrimsReplayOnlyAssistantItemsForPiToolLoop(t *testin
 	if seen[0].inputCount != 1 || seen[0].firstInputRole != "user" {
 		t.Fatalf("首轮 input 应保留 user 消息，got count=%d role=%q", seen[0].inputCount, seen[0].firstInputRole)
 	}
-	if seen[1].previousResponseID != "resp_pi_tool_1" {
-		t.Fatalf("第二轮 previous_response_id = %q, want %q", seen[1].previousResponseID, "resp_pi_tool_1")
+	if seen[1].previousResponseID != "" {
+		t.Fatalf("第二轮 previous_response_id = %q, want empty", seen[1].previousResponseID)
 	}
 	if !seen[1].store {
 		t.Fatal("expected second PI tool loop request to keep store=true")
 	}
-	if seen[1].inputCount != 1 {
+	if seen[1].inputCount != 3 {
 		t.Fatalf("第二轮 input 条数 = %d, want 1", seen[1].inputCount)
 	}
-	if seen[1].firstInputType != "function_call_output" {
-		t.Fatalf("第二轮转发的 input[0].type = %q, want %q", seen[1].firstInputType, "function_call_output")
+	if seen[1].firstInputType != "" {
+		t.Fatalf("第二轮转发的 input[0].type = %q, want empty", seen[1].firstInputType)
 	}
-	if seen[1].firstCallID != "call_weather_1" {
-		t.Fatalf("第二轮转发的 call_id = %q, want %q", seen[1].firstCallID, "call_weather_1")
+	if seen[1].firstCallID != "" {
+		t.Fatalf("第二轮转发的 call_id = %q, want empty", seen[1].firstCallID)
 	}
 }
 
@@ -1000,7 +1000,7 @@ func TestPrefixedCodexRouteTargetsProviderByName(t *testing.T) {
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
 
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 	router := gin.New()
 	relayService.registerRoutes(router)
 
@@ -1056,7 +1056,7 @@ func TestCodexNonStreamRequestAcceptsUpstreamEventStreamSuccess(t *testing.T) {
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
 
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 	router := gin.New()
 	relayService.registerRoutes(router)
 
@@ -1109,7 +1109,7 @@ func TestCodexStreamRequestWithoutChainSessionStillCountsAsSuccess(t *testing.T)
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
 
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 	router := gin.New()
 	relayService.registerRoutes(router)
 
@@ -1161,8 +1161,8 @@ func TestCodexAutoFallbackWhenProviderRejectsPreviousResponseID(t *testing.T) {
 			}
 			_, _ = w.Write([]byte(`{"id":"resp_chain_1","object":"response","usage":{"input_tokens":12,"output_tokens":3}}`))
 		case 2:
-			if current.previousResponseID != "resp_chain_1" {
-				t.Fatalf("第二轮首次尝试 previous_response_id = %q, want %q", current.previousResponseID, "resp_chain_1")
+			if current.previousResponseID != "" {
+				t.Fatalf("第二轮首次尝试 previous_response_id = %q, want empty", current.previousResponseID)
 			}
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"detail":"Unsupported parameter: previous_response_id"}`))
@@ -1206,7 +1206,7 @@ func TestCodexAutoFallbackWhenProviderRejectsPreviousResponseID(t *testing.T) {
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
 
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 	router := gin.New()
 	relayService.registerRoutes(router)
 
@@ -1257,7 +1257,7 @@ func TestPrefixedProviderNotFoundReturns404(t *testing.T) {
 		t.Fatalf("保存 provider 配置失败: %v", err)
 	}
 
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 	router := gin.New()
 	relayService.registerRoutes(router)
 
@@ -1351,7 +1351,7 @@ func TestModelsHandler(t *testing.T) {
 	}
 
 	// 创建 ProviderRelayService
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 
 	// 创建测试路由
 	router := gin.New()
@@ -1457,7 +1457,7 @@ func TestCustomModelsHandler(t *testing.T) {
 	}
 
 	// 创建 ProviderRelayService
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 
 	// 创建测试路由
 	router := gin.New()
@@ -1508,7 +1508,7 @@ func TestModelsHandler_NoProviders(t *testing.T) {
 	blacklistService := NewBlacklistService(settingsService, nil)
 
 	// 创建 ProviderRelayService（没有配置任何 provider）
-	relayService := NewProviderRelayService(providerService, nil, blacklistService, nil, "")
+	relayService := NewProviderRelayService(providerService, blacklistService, nil, "")
 
 	// 创建测试路由
 	router := gin.New()

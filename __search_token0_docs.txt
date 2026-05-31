@@ -1,0 +1,5 @@
+services\providerrelay.go:46:// errTokenZero 表示上游返回 2xx，但解析到 output_tokens=0（视为失败）
+services\providerrelay.go:47:var errTokenZero = errors.New("output_tokens is 0")
+services\providerrelay.go:1016:		// 非流式：先读完 body 解析 token，再决定是否写回客户端（允许 token=0 时降级到下一个 provider）
+.helloagents\CHANGELOG.md:29:  - 决策: responses-compact-compat#D001(compact 是否沿用 output_tokens>0 的失败判定)
+.helloagents\archive\2026-03\202603091854_responses-compact-compat\proposal.md:107:### responses-compact-compat#D001: compact 是否沿用 output_tokens>0 的失败判定

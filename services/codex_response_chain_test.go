@@ -123,7 +123,7 @@ func TestPrepareCodexResponseChainRewritesSuffixAndPreservesInstructionsAndTools
 		ToolsRaw:           json.RawMessage(`[{"type":"function","name":"tool_a"}]`),
 	})
 
-	secondBody := []byte(`{"model":"gpt-5.1","input":[{"role":"user","content":"hello"},{"role":"user","content":"world"}]}`)
+	secondBody := []byte(`{"model":"gpt-5.1","input":[{"role":"user","content":"hello"},{"role":"user","content":"world"}],"instructions":"system","tools":[{"type":"function","name":"tool_a"}]}`)
 	nextBody, plan, err := prepareCodexResponseChain(provider, "/v1/responses", headers, secondBody)
 	if err != nil {
 		t.Fatalf("prepareCodexResponseChain returned error: %v", err)
@@ -131,14 +131,14 @@ func TestPrepareCodexResponseChainRewritesSuffixAndPreservesInstructionsAndTools
 	if !plan.Active {
 		t.Fatal("expected active response chain plan")
 	}
-	if got := gjson.GetBytes(nextBody, "previous_response_id").String(); got != "resp_1" {
-		t.Fatalf("previous_response_id = %q, want %q", got, "resp_1")
+	if got := gjson.GetBytes(nextBody, "previous_response_id").String(); got != "" {
+		t.Fatalf("previous_response_id should be empty (auto-inject disabled), got %q", got)
 	}
-	if got := gjson.GetBytes(nextBody, "input.#").Int(); got != 1 {
-		t.Fatalf("suffix input length = %d, want 1", got)
+	if got := gjson.GetBytes(nextBody, "input.#").Int(); got != 2 {
+		t.Fatalf("input length should be 2 (unchanged), got %d", got)
 	}
-	if got := gjson.GetBytes(nextBody, "input.0.content").String(); got != "world" {
-		t.Fatalf("suffix input content = %q, want %q", got, "world")
+	if got := gjson.GetBytes(nextBody, "input.1.content").String(); got != "world" {
+		t.Fatalf("input[1].content = %q, want %q", got, "world")
 	}
 	if got := gjson.GetBytes(nextBody, "instructions").String(); got != "system" {
 		t.Fatalf("instructions = %q, want %q", got, "system")
@@ -183,20 +183,14 @@ func TestPrepareCodexResponseChainTrimsReplayOnlyAssistantItems(t *testing.T) {
 	if !plan.Active {
 		t.Fatal("expected active response chain plan")
 	}
-	if got := gjson.GetBytes(nextBody, "previous_response_id").String(); got != "resp_tool_1" {
-		t.Fatalf("previous_response_id = %q, want %q", got, "resp_tool_1")
+	if got := gjson.GetBytes(nextBody, "previous_response_id").String(); got != "" {
+		t.Fatalf("previous_response_id should be empty (auto-inject disabled), got %q", got)
 	}
 	if !gjson.GetBytes(nextBody, "store").Bool() {
 		t.Fatal("expected explicit store=false to be rewritten to store=true")
 	}
-	if got := gjson.GetBytes(nextBody, "input.#").Int(); got != 1 {
-		t.Fatalf("suffix input length = %d, want 1", got)
-	}
-	if got := gjson.GetBytes(nextBody, "input.0.type").String(); got != "function_call_output" {
-		t.Fatalf("suffix input[0].type = %q, want %q", got, "function_call_output")
-	}
-	if got := gjson.GetBytes(nextBody, "input.0.call_id").String(); got != "call_weather_1" {
-		t.Fatalf("suffix input[0].call_id = %q, want %q", got, "call_weather_1")
+	if got := gjson.GetBytes(nextBody, "input.#").Int(); got != 3 {
+		t.Fatalf("expected full input length 3, got %d", got)
 	}
 }
 

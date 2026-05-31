@@ -26,6 +26,11 @@ type Service struct {
 	longContexts map[string]LongContextPricing
 }
 
+// PricingOverrideProvider 描述可提供供应商级价格覆盖的数据源。
+type PricingOverrideProvider interface {
+	PricingOverrideForModel(model string) (PricingEntry, bool)
+}
+
 // PricingEntry 映射 JSON 内的字段。
 type PricingEntry struct {
 	InputCostPerToken                   float64 `json:"input_cost_per_token"`
@@ -111,10 +116,28 @@ func NewService() (*Service, error) {
 
 // CalculateCost 根据模型与 token 用量返回费用明细（美元）。
 func (s *Service) CalculateCost(model string, usage UsageSnapshot) CostBreakdown {
+	return s.CalculateCostWithOverride(model, usage, nil)
+}
+
+// CalculateCostWithOverride 支持 provider-model 覆盖价格；未覆盖字段回退到 model 默认价格。
+func (s *Service) CalculateCostWithOverride(model string, usage UsageSnapshot, overrideProvider PricingOverrideProvider) CostBreakdown {
 	if s == nil || model == "" {
 		return CostBreakdown{}
 	}
 	entry, hasPricing := s.getPricing(model)
+	if entry != nil {
+		resolved := *entry
+		entry = &resolved
+	}
+	if overrideProvider != nil {
+		if override, ok := overrideProvider.PricingOverrideForModel(model); ok {
+			if entry == nil {
+				entry = &PricingEntry{}
+			}
+			applyPricingOverride(entry, override)
+			hasPricing = true
+		}
+	}
 	breakdown := CostBreakdown{HasPricing: hasPricing}
 	if entry == nil && !strings.Contains(strings.ToLower(model), "[1m]") {
 		return breakdown
@@ -222,6 +245,43 @@ func ensureCachePricing(entry *PricingEntry) {
 	if entry.CacheReadInputTokenCost == 0 && entry.InputCostPerToken > 0 {
 		entry.CacheReadInputTokenCost = entry.InputCostPerToken * 0.1
 	}
+}
+
+func applyPricingOverride(base *PricingEntry, override PricingEntry) {
+	if base == nil {
+		return
+	}
+	if override.InputCostPerToken > 0 {
+		base.InputCostPerToken = override.InputCostPerToken
+	}
+	if override.OutputCostPerToken > 0 {
+		base.OutputCostPerToken = override.OutputCostPerToken
+	}
+	if override.OutputCostPerReasoningToken > 0 {
+		base.OutputCostPerReasoningToken = override.OutputCostPerReasoningToken
+	}
+	if override.CacheCreationInputTokenCost > 0 {
+		base.CacheCreationInputTokenCost = override.CacheCreationInputTokenCost
+	}
+	if override.CacheCreationInputTokenCostAbove1Hr > 0 {
+		base.CacheCreationInputTokenCostAbove1Hr = override.CacheCreationInputTokenCostAbove1Hr
+	}
+	if override.CacheCreationInputTokenCostAbove200 > 0 {
+		base.CacheCreationInputTokenCostAbove200 = override.CacheCreationInputTokenCostAbove200
+	}
+	if override.CacheReadInputTokenCost > 0 {
+		base.CacheReadInputTokenCost = override.CacheReadInputTokenCost
+	}
+	if override.InputCostPerTokenAbove200k > 0 {
+		base.InputCostPerTokenAbove200k = override.InputCostPerTokenAbove200k
+	}
+	if override.InputCostPerTokenAbove128k > 0 {
+		base.InputCostPerTokenAbove128k = override.InputCostPerTokenAbove128k
+	}
+	if override.OutputCostPerTokenAbove200k > 0 {
+		base.OutputCostPerTokenAbove200k = override.OutputCostPerTokenAbove200k
+	}
+	ensureCachePricing(base)
 }
 
 func stripRegionPrefix(name string) string {

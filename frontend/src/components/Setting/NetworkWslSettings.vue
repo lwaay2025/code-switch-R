@@ -120,14 +120,6 @@
             />
             <span>Codex</span>
           </label>
-          <label class="cli-checkbox">
-            <input
-              type="checkbox"
-              v-model="targetCli.gemini"
-              @change="handleTargetCliChange"
-            />
-            <span>Gemini CLI</span>
-          </label>
         </div>
       </div>
 
@@ -176,7 +168,6 @@ const lastConfigResult = ref<{ success: boolean; message: string } | null>(null)
 const targetCli = reactive({
   claudeCode: true,
   codex: true,
-  gemini: true,
 })
 
 // Computed current address based on mode
@@ -208,7 +199,6 @@ const loadSettings = async () => {
       if (settings.targetCli) {
         targetCli.claudeCode = settings.targetCli.claudeCode ?? true
         targetCli.codex = settings.targetCli.codex ?? true
-        targetCli.gemini = settings.targetCli.gemini ?? true
       }
     }
   } catch (error) {
@@ -292,7 +282,6 @@ const handleConfigureNow = async () => {
     const result = await Call.ByName('codeswitch/services.NetworkService.ConfigureWSLClients', {
       claudeCode: targetCli.claudeCode,
       codex: targetCli.codex,
-      gemini: targetCli.gemini,
     })
 
     lastConfigResult.value = {

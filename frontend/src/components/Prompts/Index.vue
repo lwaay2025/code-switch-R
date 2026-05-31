@@ -14,12 +14,11 @@ import type { Prompt } from '../../../bindings/codeswitch/services/models'
 
 const { t } = useI18n()
 
-type Platform = 'claude' | 'codex' | 'gemini'
+type Platform = 'claude' | 'codex'
 
 const platforms: { id: Platform; name: string }[] = [
   { id: 'claude', name: 'Claude Code' },
-  { id: 'codex', name: 'Codex' },
-  { id: 'gemini', name: 'Gemini' }
+  { id: 'codex', name: 'Codex' }
 ]
 
 const activePlatform = ref<Platform>('claude')

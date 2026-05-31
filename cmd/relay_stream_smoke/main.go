@@ -151,8 +151,7 @@ func main() {
 	providerService := services.NewProviderService()
 	settingsService := services.NewSettingsService()
 	blacklistService := services.NewBlacklistService(settingsService, nil)
-	geminiService := services.NewGeminiService(relayAddr)
-	relay := services.NewProviderRelayService(providerService, geminiService, blacklistService, nil, relayAddr)
+	relay := services.NewProviderRelayService(providerService, blacklistService, nil, relayAddr)
 	defer relay.Stop()
 
 	if err := providerService.SaveProviders("codex", []services.Provider{

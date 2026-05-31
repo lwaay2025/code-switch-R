@@ -15,7 +15,7 @@ import (
 type DeepLinkImportRequest struct {
 	Version      string  `json:"version"`              // 协议版本 (e.g., "v1")
 	Resource     string  `json:"resource"`             // 资源类型 (e.g., "provider")
-	App          string  `json:"app"`                  // 目标应用 (claude/codex/gemini)
+	App          string  `json:"app"`                  // 目标应用 (claude/codex)
 	Name         string  `json:"name"`                 // 供应商名称
 	Homepage     string  `json:"homepage"`             // 供应商主页
 	Endpoint     string  `json:"endpoint"`             // API 端点
@@ -94,8 +94,8 @@ func (s *DeepLinkService) ParseDeepLinkURL(urlStr string) (*DeepLinkImportReques
 	if app == "" {
 		return nil, fmt.Errorf("缺少 'app' 参数")
 	}
-	if app != "claude" && app != "codex" && app != "gemini" {
-		return nil, fmt.Errorf("无效的 app 类型: 必须是 'claude', 'codex', 或 'gemini', 得到 '%s'", app)
+	if app != "claude" && app != "codex" {
+		return nil, fmt.Errorf("无效的 app 类型: 必须是 'claude' 或 'codex', 得到 '%s'", app)
 	}
 
 	name := params.Get("name")
@@ -198,9 +198,6 @@ func (s *DeepLinkService) ImportProviderFromDeepLink(request *DeepLinkImportRequ
 		kind = "claude"
 	case "codex":
 		kind = "codex"
-	case "gemini":
-		// Gemini 暂不支持通过 ProviderService 添加，返回友好提示
-		return "", fmt.Errorf("Gemini 供应商导入暂不支持，请使用 Gemini 页面手动添加")
 	default:
 		return "", fmt.Errorf("不支持的 app 类型: %s", merged.App)
 	}
@@ -297,8 +294,6 @@ func (s *DeepLinkService) parseAndMergeConfig(request *DeepLinkImportRequest) (*
 		s.mergeClaudeConfig(&merged, configData)
 	case "codex":
 		s.mergeCodexConfig(&merged, configData)
-	case "gemini":
-		s.mergeGeminiConfig(&merged, configData)
 	}
 
 	return &merged, nil
@@ -388,33 +383,6 @@ func (s *DeepLinkService) mergeCodexConfig(request *DeepLinkImportRequest, confi
 	// 自动填充 homepage
 	if request.Homepage == "" && request.Endpoint != "" {
 		request.Homepage = inferHomepage(request.Endpoint, "https://openai.com")
-	}
-}
-
-// mergeGeminiConfig 合并 Gemini 配置
-func (s *DeepLinkService) mergeGeminiConfig(request *DeepLinkImportRequest, config map[string]interface{}) {
-	// Gemini 使用扁平化的 env 结构
-	if request.APIKey == "" {
-		if apiKey, ok := config["GEMINI_API_KEY"].(string); ok {
-			request.APIKey = apiKey
-		}
-	}
-
-	if request.Endpoint == "" {
-		if baseURL, ok := config["GEMINI_BASE_URL"].(string); ok {
-			request.Endpoint = baseURL
-		}
-	}
-
-	if request.Model == nil {
-		if model, ok := config["GEMINI_MODEL"].(string); ok {
-			request.Model = &model
-		}
-	}
-
-	// 自动填充 homepage
-	if request.Homepage == "" && request.Endpoint != "" {
-		request.Homepage = inferHomepage(request.Endpoint, "https://ai.google.dev")
 	}
 }
 

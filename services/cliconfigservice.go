@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,7 +48,7 @@ type CLIPlatform string
 const (
 	PlatformClaude CLIPlatform = "claude"
 	PlatformCodex  CLIPlatform = "codex"
-	PlatformGemini CLIPlatform = "gemini"
+	PlatformGemini CLIPlatform = "gemini"        // 已废弃，保留兼容
 )
 
 // CLIConfigField 配置字段信息
@@ -116,8 +117,6 @@ func (s *CliConfigService) GetConfig(platform string) (*CLIConfig, error) {
 		return s.getClaudeConfig()
 	case PlatformCodex:
 		return s.getCodexConfig()
-	case PlatformGemini:
-		return s.getGeminiConfig()
 	default:
 		return nil, fmt.Errorf("不支持的平台: %s", platform)
 	}
@@ -179,6 +178,7 @@ func (s *CliConfigService) GetConfigSnapshots(platform string, apiUrl string, ap
 		}
 		return out
 	}
+	_ = serializeEnvNoEmpty
 
 	switch p {
 	case PlatformClaude:
@@ -360,55 +360,7 @@ func (s *CliConfigService) GetConfigSnapshots(platform string, apiUrl string, ap
 		}, nil
 
 	case PlatformGemini:
-		envPath := s.getGeminiEnvPath()
-		currentEnv, err := readText(envPath)
-		if err != nil {
-			return nil, fmt.Errorf("读取 Gemini .env 失败: %w", err)
-		}
-
-		currentFiles := []CLIConfigFile{
-			{Path: envPath, Format: "env", Content: currentEnv},
-		}
-
-		// 计算当前模式：是否指向本地代理
-		currentMode := "direct"
-		if strings.TrimSpace(currentEnv) != "" {
-			envMap := parseEnvFile(currentEnv)
-			if strings.EqualFold(strings.TrimSpace(envMap["GOOGLE_GEMINI_BASE_URL"]), strings.TrimSpace(s.geminiBaseURL())) {
-				currentMode = "proxy"
-			}
-		}
-
-		envMap := parseEnvFile(currentEnv)
-		if envMap == nil {
-			envMap = make(map[string]string)
-		}
-
-		if previewDirect {
-			if strings.TrimSpace(apiUrl) != "" {
-				envMap["GOOGLE_GEMINI_BASE_URL"] = strings.TrimSpace(apiUrl)
-			} else {
-				delete(envMap, "GOOGLE_GEMINI_BASE_URL")
-			}
-			if strings.TrimSpace(apiKey) != "" {
-				envMap["GEMINI_API_KEY"] = strings.TrimSpace(apiKey)
-			} else {
-				delete(envMap, "GEMINI_API_KEY")
-			}
-		} else {
-			envMap["GOOGLE_GEMINI_BASE_URL"] = s.geminiBaseURL()
-			envMap["GEMINI_API_KEY"] = "code-switch-r"
-		}
-
-		previewFiles := []CLIConfigFile{
-			{Path: envPath, Format: "env", Content: serializeEnvNoEmpty(envMap)},
-		}
-
-		return &CLIConfigSnapshots{
-			CurrentFiles: currentFiles,
-			PreviewFiles: previewFiles,
-			Mode:         currentMode,
-		}, nil
+		return nil, fmt.Errorf("Gemini 平台已不再支持")
 
 	default:
 		return nil, fmt.Errorf("不支持的平台: %s", platform)
@@ -427,8 +379,6 @@ func (s *CliConfigService) SaveConfig(platform string, editable map[string]inter
 		return s.saveClaudeConfig(editable)
 	case PlatformCodex:
 		return s.saveCodexConfig(editable)
-	case PlatformGemini:
-		return s.saveGeminiConfig(editable)
 	default:
 		return fmt.Errorf("不支持的平台: %s", platform)
 	}
@@ -462,11 +412,7 @@ func (s *CliConfigService) SaveConfigFileContent(platform string, filePath strin
 		}
 		return fmt.Errorf("非法文件路径: %s", filePath)
 	case PlatformGemini:
-		envPath := filepath.Clean(s.getGeminiEnvPath())
-		if !samePath(cleaned, envPath) {
-			return fmt.Errorf("非法文件路径: %s", filePath)
-		}
-		return s.saveGeminiEnvContent(envPath, content)
+		return fmt.Errorf("Gemini 平台已不再支持")
 	default:
 		return fmt.Errorf("不支持的平台: %s", platform)
 	}
@@ -517,8 +463,6 @@ func (s *CliConfigService) SetTemplate(platform string, template map[string]inte
 		templates.Claude = tpl
 	case PlatformCodex:
 		templates.Codex = tpl
-	case PlatformGemini:
-		templates.Gemini = tpl
 	default:
 		return fmt.Errorf("不支持的平台: %s", platform)
 	}
@@ -533,8 +477,6 @@ func (s *CliConfigService) GetLockedFields(platform string) []string {
 		return []string{"env.ANTHROPIC_BASE_URL", "env.ANTHROPIC_AUTH_TOKEN"}
 	case PlatformCodex:
 		return []string{"model_provider", "preferred_auth_method", "model_providers.code-switch-r.base_url", "model_providers.code-switch-r.name", "model_providers.code-switch-r.wire_api"}
-	case PlatformGemini:
-		return []string{"GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY"}
 	default:
 		return []string{}
 	}
@@ -555,8 +497,6 @@ func (s *CliConfigService) RestoreDefault(platform string) error {
 		configPath = s.getClaudeConfigPath()
 	case PlatformCodex:
 		configPath = s.getCodexConfigPath()
-	case PlatformGemini:
-		configPath = s.getGeminiEnvPath()
 	default:
 		return fmt.Errorf("不支持的平台: %s", platform)
 	}
@@ -1321,4 +1261,42 @@ func samePath(a, b string) bool {
 	return filepath.Clean(a) == filepath.Clean(b)
 }
 
-// 注意: parseEnvFile 和 isValidEnvKey 已在 geminiservice.go 中定义
+// parseEnvFile 解析 .env 格式文件内容（原 geminiservice.go，已合并至此）
+func parseEnvFile(content string) map[string]string {
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+	result := make(map[string]string)
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+		eqIdx := strings.Index(line, "=")
+		if eqIdx <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:eqIdx])
+		value := strings.TrimSpace(line[eqIdx+1:])
+		value = strings.Trim(value, `"'`)
+		result[key] = value
+	}
+	return result
+}
+
+// isValidEnvKey 校验 .env key 格式
+func isValidEnvKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for _, r := range key {
+		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_') {
+			return false
+		}
+	}
+	return true
+}

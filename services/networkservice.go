@@ -39,7 +39,6 @@ type NetworkSettings struct {
 type TargetCli struct {
 	ClaudeCode bool `json:"claudeCode"`
 	Codex      bool `json:"codex"`
-	Gemini     bool `json:"gemini"`
 }
 
 // WSLDetection WSL 检测结果
@@ -61,7 +60,6 @@ type NetworkService struct {
 	relayAddr     string
 	claudeService *ClaudeSettingsService
 	codexService  *CodexSettingsService
-	geminiService *GeminiService
 }
 
 // NewNetworkService 创建网络服务
@@ -69,7 +67,6 @@ func NewNetworkService(
 	relayAddr string,
 	claudeService *ClaudeSettingsService,
 	codexService *CodexSettingsService,
-	geminiService *GeminiService,
 ) *NetworkService {
 	home, err := getUserHomeDir()
 	if err != nil {
@@ -81,7 +78,6 @@ func NewNetworkService(
 		relayAddr:     relayAddr,
 		claudeService: claudeService,
 		codexService:  codexService,
-		geminiService: geminiService,
 	}
 }
 
@@ -95,7 +91,6 @@ func (ns *NetworkService) defaultSettings() NetworkSettings {
 		TargetCli: TargetCli{
 			ClaudeCode: true,
 			Codex:      true,
-			Gemini:     true,
 		},
 	}
 }
@@ -338,13 +333,7 @@ func (ns *NetworkService) ConfigureWSLClients(targets TargetCli) ConfigureResult
 			}
 		}
 
-		if targets.Gemini {
-			if err := ns.configureWSLGemini(distro, proxyURL); err != nil {
-				errors = append(errors, fmt.Sprintf("Gemini CLI in %s: %v", distro, err))
-			} else {
-				successes = append(successes, fmt.Sprintf("Gemini CLI in %s", distro))
-			}
-		}
+
 	}
 
 	if len(errors) > 0 {
