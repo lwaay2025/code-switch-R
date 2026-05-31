@@ -473,67 +473,6 @@ const editableFields = computed(() => {
   return config.value?.fields.filter(f => !f.locked) || []
 })
 
-// 辅助函数：将 Gemini 供应商配置注入到 .env 内容中
-// 注意：这是简化的预览逻辑，仅展示 apiKey/baseUrl 的预期变化
-// 后端 SwitchProvider() 实际是整文件覆盖写，这里做局部补丁以便用户理解
-const applyGeminiProviderConfig = (
-  content: string,
-  providerConfig: { apiKey?: string; baseUrl?: string }
-): string => {
-  // 处理空内容的情况
-  const trimmedContent = (content || '').trim()
-  const lines = trimmedContent ? trimmedContent.split(/\r?\n/) : []
-  const newLines: string[] = []
-
-  // 定义要更新的键值对（只有非空值才写入，与后端行为一致）
-  // 按后端写入顺序：GOOGLE_GEMINI_BASE_URL → GEMINI_API_KEY
-  const updates = new Map<string, string>()
-  if (providerConfig.baseUrl?.trim()) updates.set('GOOGLE_GEMINI_BASE_URL', providerConfig.baseUrl.trim())
-  if (providerConfig.apiKey?.trim()) updates.set('GEMINI_API_KEY', providerConfig.apiKey.trim())
-
-  const foundKeys = new Set<string>()
-
-  // 1. 遍历现有行，替换或删除
-  for (const line of lines) {
-    const trimmed = line.trim()
-    // 跳过注释和空行
-    if (trimmed.startsWith('#') || !trimmed.includes('=')) {
-      newLines.push(line)
-      continue
-    }
-
-    const eqIndex = line.indexOf('=')
-    const key = line.substring(0, eqIndex).trim()
-
-    // 如果是我们关注的 key
-    if (key === 'GEMINI_API_KEY' || key === 'GOOGLE_GEMINI_BASE_URL') {
-      if (updates.has(key)) {
-        // 有新值：替换
-        newLines.push(`${key}=${updates.get(key)}`)
-        foundKeys.add(key)
-      }
-      // 没有新值：删除（不添加到 newLines）
-    } else {
-      // 其他 key 保持原样
-      newLines.push(line)
-    }
-  }
-
-  // 2. 追加不存在的 key（按后端顺序：GOOGLE_GEMINI_BASE_URL → GEMINI_API_KEY）
-  const keysToAdd = ['GOOGLE_GEMINI_BASE_URL', 'GEMINI_API_KEY']
-  for (const key of keysToAdd) {
-    if (updates.has(key) && !foundKeys.has(key)) {
-      // 确保追加前有换行（如果文件不为空且最后一行不是空行）
-      if (newLines.length > 0 && newLines[newLines.length - 1] !== '') {
-        newLines.push('')
-      }
-      newLines.push(`${key}=${updates.get(key)}`)
-    }
-  }
-
-  return newLines.join('\n')
-}
-
 // 辅助函数：将 Claude 供应商配置注入到 settings.json 内容中
 const applyClaudeProviderConfig = (
   content: string,
@@ -610,21 +549,6 @@ const previewFiles = computed((): CLIConfigFile[] => {
   // 根据平台注入供应商配置，展示"激活后"的配置预览
   // 仅当有有效输入时才注入（避免空值也触发重写）
   if (hasProviderInput.value) {
-    if (props.platform === 'gemini') {
-      return files.map(file => {
-        const isEnvFile = file.path?.endsWith('.env') ||
-                          file.format === 'env' ||
-                          (!file.format && primaryFormat === 'env')
-        if (isEnvFile) {
-          return {
-            ...file,
-            content: applyGeminiProviderConfig(file.content, props.providerConfig!)
-          }
-        }
-        return file
-      })
-    }
-
     if (props.platform === 'claude') {
       return files.map(file => {
         const isJsonFile = file.path?.endsWith('.json') ||
@@ -1131,18 +1055,6 @@ const applyParsedConfig = (data: Record<string, any>) => {
           next.disable_response_storage = boolVal
         }
       }
-      break
-    }
-    case 'gemini': {
-      Object.entries(data).forEach(([k, v]) => {
-        if (k === 'GEMINI_API_KEY' && typeof v === 'string') {
-          next.GEMINI_API_KEY = v
-        } else if (k === 'GEMINI_MODEL' && typeof v === 'string') {
-          next.GEMINI_MODEL = v
-        } else if (/^[A-Z0-9_]+$/.test(k) && k !== 'GOOGLE_GEMINI_BASE_URL') {
-          mergeCustom(k, v)
-        }
-      })
       break
     }
     default:

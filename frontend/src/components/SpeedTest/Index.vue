@@ -13,7 +13,7 @@ interface Endpoint {
   url: string
   result: EndpointLatency | null
   testing: boolean
-  source: 'manual' | 'claude' | 'codex' | 'gemini'  // 新增：端点来源
+  source: 'manual' | 'claude' | 'codex'  // 新增：端点来源
   providerName?: string                              // 新增：供应商名称
 }
 
@@ -564,14 +564,6 @@ onActivated(() => {
 }
 
 .badge-codex {
-  background-color: #3b82f6;
-  color: white;
-}
-
-.badge-gemini {
-  background-color: #8b5cf6;
-  color: white;
-}
 
 :global(.dark) .source-badge {
   opacity: 0.9;
