@@ -24,6 +24,8 @@ var GlobalDBQueueLogs *DBWriteQueue
 
 // InitGlobalDBQueue 初始化全局队列（双队列架构）
 func InitGlobalDBQueue() error {
+	writeDebugLog("DBQ", "DBQ-INIT", map[string]interface{}{})
+
 	db, err := xdb.DB("default")
 	if err != nil {
 		return fmt.Errorf("获取数据库连接失败: %w", err)
@@ -172,6 +174,7 @@ func (q *DBWriteQueue) worker() {
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Printf("🚨 数据库写入队列 worker panic: %v\n", r)
+			writeDebugLog("DBQ", "DBQ-WORKER-PANIC", map[string]interface{}{"error": fmt.Sprintf("%v", r), "currentTask": currentTask != nil})
 
 			// 关键修复：如果 panic 时正在处理任务，必须返回错误，否则调用方永久阻塞
 			if currentTask != nil {
@@ -238,6 +241,7 @@ func (q *DBWriteQueue) batchWorker() {
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Printf("🚨 数据库批量写入队列 worker panic: %v\n", r)
+			writeDebugLog("DBQ", "DBQ-BATCH-PANIC", map[string]interface{}{"error": fmt.Sprintf("%v", r), "batchSize": len(currentBatch)})
 
 			// 关键修复：如果 panic 时正在处理批次，必须给所有任务返回错误
 			if len(currentBatch) > 0 {

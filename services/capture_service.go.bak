@@ -1,0 +1,333 @@
+package services
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/daodao97/xgo/xdb"
+	"github.com/google/uuid"
+	"github.com/tidwall/gjson"
+)
+
+var (
+	globalCaptureEnabled atomic.Bool
+)
+
+type CaptureConfig struct {
+	Enabled       bool ` + '`' + 'json:"enabled"' + '`' + `
+	RetentionDays int  ` + '`' + 'json:"retention_days"' + '`' + `
+	MaxRecords    int  ` + '`' + 'json:"max_records"' + '`' + `
+}
+
+func writeDebugLog(hypothesisID, msg string, data map[string]interface{}) {
+	entry := map[string]interface{}{
+		"sessionId":    "e00ecd",
+		"timestamp":    time.Now().UnixMilli(),
+		"hypothesisID": hypothesisID,
+		"message":      msg,
+		"data":         data,
+	}
+	line, _ := json.Marshal(entry)
+	f, err := os.OpenFile("d:\\项目\\code-switch-R\\.cursor\\debug-e00ecd.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.Write(line)
+	f.Write([]byte("\n"))
+}
+
+func DefaultCaptureConfig() CaptureConfig {
+	return CaptureConfig{
+		Enabled:       false,
+		RetentionDays: 3,
+		MaxRecords:    1000,
+	}
+}
+
+// ============================================================
+// CaptureSession - 一次 request-response 的完整追踪
+// ============================================================
+
+type CaptureChunk struct {
+}
+
+type CaptureSession struct {
+
+
+
+}
+
+func NewCaptureSession(requestID, turnID, activityID, prevTurnID string) *CaptureSession {
+	return &CaptureSession{
+		RequestID:  requestID,
+		TurnID:     turnID,
+		ActivityID: activityID,
+		PrevTurnID: prevTurnID,
+		Timestamp:  time.Now(),
+		Status:     "pending",
+		Protocol:   "SSE",
+		Chunks:     make([]CaptureChunk, 0, 64),
+	}
+}
+
+func (s *CaptureSession) RecordChunk(content string, chunkType string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if s.FirstByteAt.IsZero() {
+		s.FirstByteAt = now
+		s.Status = "streaming"
+	}
+}
+
+func (s *CaptureSession) Finalize(status string, httpCode int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Status = status
+	if httpCode > 0 {
+		s.StatusCode = httpCode
+	}
+	}
+}
+
+// ============================================================
+// CaptureManager - 全局抓包管理器
+// ============================================================
+
+type CaptureManager struct {
+}
+
+var GlobalCaptureManager *CaptureManager
+
+func InitCaptureManager() {
+	GlobalCaptureManager = &CaptureManager{
+		sessions: make(map[string]*CaptureSession),
+		config:   DefaultCaptureConfig(),
+	}
+}
+
+// ============================================================
+// 开关控制
+// ============================================================
+
+func (cm *CaptureManager) IsEnabled() bool {
+	return globalCaptureEnabled.Load()
+}
+
+func (cm *CaptureManager) SetEnabled(enabled bool) error {
+	globalCaptureEnabled.Store(enabled)
+	val := "false"
+	if enabled {
+		val = "true"
+	}
+	}
+}
+
+func (cm *CaptureManager) GetConfig() CaptureConfig {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.config
+}
+
+func (cm *CaptureManager) SetConfig(cfg CaptureConfig) error {
+	cm.mu.Lock()
+	cm.config = cfg
+	cm.mu.Unlock()
+	if err := cm.saveConfig(); err != nil {
+		return err
+	}
+	}
+}
+
+func (cm *CaptureManager) loadConfig() {
+	cfg := DefaultCaptureConfig()
+	db, err := xdb.DB("default")
+	if err != nil {
+		return
+	}
+	var enabled string
+	}
+	var days string
+	}
+	var maxRec string
+	}
+}
+
+func (cm *CaptureManager) saveConfig() error {
+	cm.mu.RLock()
+	cfg := cm.config
+	cm.mu.RUnlock()
+	var err error
+	err = GlobalDBQueue.Exec("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('capture_enabled', ?)", fmt.Sprintf("%v", cfg.Enabled))
+	if err != nil { return err }
+	err = GlobalDBQueue.Exec("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('capture_retention_days', ?)", fmt.Sprintf("%d", cfg.RetentionDays))
+	if err != nil { return err }
+	err = GlobalDBQueue.Exec("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('capture_max_records', ?)", fmt.Sprintf("%d", cfg.MaxRecords))
+	return err
+}
+
+// ============================================================
+// Session 管理
+// ============================================================
+
+func (cm *CaptureManager) GetSession(turnID string) *CaptureSession {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.sessions[turnID]
+}
+
+func (cm *CaptureManager) RemoveSession(turnID string) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	delete(cm.sessions, turnID)
+}
+
+// ============================================================
+// 核心拦截入口
+// ============================================================
+
+func (cm *CaptureManager) InterceptRequest(source, endpoint string, body []byte, headers map[string]string) *CaptureSession {
+	if !cm.IsEnabled() {
+		return nil
+	}
+	}
+
+
+	// 异步数据库写入（复制 body/headers 避免竞态）
+
+
+
+}
+
+func (cm *CaptureManager) InterceptResponseChunk(turnID string, data []byte) {
+	if !cm.IsEnabled() {
+		return
+	}
+	}
+	}
+		}
+	}
+}
+
+func (cm *CaptureManager) FinalizeTurn(turnID string, status string, httpCode int, respHeaders map[string]string) {
+	session := cm.GetSession(turnID)
+	if session == nil {
+		writeDebugLog("H1", "FinalizeTurn: session nil", map[string]interface{}{"turnID": turnID, "status": status})
+		return
+	}
+
+			}
+		}
+
+		}
+		}
+		}
+
+}
+
+// ============================================================
+// WebSocket 支持
+// ============================================================
+
+func (cm *CaptureManager) InterceptWSConnection(connectionID, activityID, url string) {
+	if !cm.IsEnabled() { return }
+	_ = InsertWSConnection(connectionID, activityID, url)
+}
+
+func (cm *CaptureManager) InterceptWSMessage(connectionID string, msgIndex int, direction, content, msgType string) {
+	if !cm.IsEnabled() { return }
+	_ = InsertWSMessage(connectionID, msgIndex, direction, content, msgType)
+}
+
+func (cm *CaptureManager) CloseWSConnection(connectionID string) {
+	if !cm.IsEnabled() { return }
+	_ = UpdateWSConnectionClosed(connectionID)
+}
+
+// ============================================================
+// 辅助函数
+// ============================================================
+
+func (cm *CaptureManager) resolveActivityID(headers map[string]string, body []byte) string {
+	for _, h := range []string{"Conversation_id", "Session_id", "X-CodeSwitch-Session-Key"} {
+		if v := getHeaderValueFold(headers, h); v != "" {
+			return v
+		}
+	}
+		}
+	}
+}
+
+func (cm *CaptureManager) resolveTurnID(body []byte) (turnID string, prevTurnID string) {
+	if body != nil {
+		if v := gjson.GetBytes(body, "previous_response_id").String(); v != "" {
+			prevTurnID = v
+		}
+	}
+	}
+}
+
+func isCaptureEligibleEndpoint(endpoint string) bool {
+	lower := strings.ToLower(strings.TrimSpace(endpoint))
+	return strings.Contains(lower, "/responses")
+}
+
+func mapToJSON(m map[string]string) string {
+	if len(m) == 0 {
+		return "{}"
+	}
+	}
+}
+
+func buildResponseSummary(s *CaptureSession) string {
+	if s == nil {
+		return "{}"
+	}
+	}
+}
+
+func (cm *CaptureManager) Cleanup() {
+	cm.mu.RLock()
+	days := cm.config.RetentionDays
+	maxRec := cm.config.MaxRecords
+	cm.mu.RUnlock()
+
+	if days > 0 {
+		if deleted, err := DeleteCaptureOlderThan(days); err != nil {
+			fmt.Printf("⚠️  抓包数据清理失败: %v\n", err)
+		} else if deleted > 0 {
+			fmt.Printf("🧹 抓包数据清理: 删除了 %d 条过期记录\n", deleted)
+		}
+	}
+		}
+	}
+}
+
+func (cm *CaptureManager) StartCleanupTicker(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Hour)
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				cm.Cleanup()
+			case <-ctx.Done():
+				ticker.Stop()
+				return
+			}
+		}
+}
+// ============================================================
+// Debug 日志辅助函数
+// ============================================================
+
+	}
+	}
+	}
+}

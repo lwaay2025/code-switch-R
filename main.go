@@ -91,6 +91,10 @@ func main() {
 	}
 	log.Println("✅ 数据库写入队列已启动")
 
+	// 初始化抓包管理器（依赖数据库连接）
+	services.InitCaptureManager()
+	log.Println("✅ 抓包管理器已初始化")
+
 	// 【新增】第三步：初始化全局 HTTP 客户端（支持代理配置）
 	proxyConfig, err := services.GetProxyConfigFromSettings()
 	if err != nil {
@@ -142,6 +146,7 @@ func main() {
 	consoleService := services.NewConsoleService()
 	customCliService := services.NewCustomCliService(providerRelay.Addr())
 	networkService := services.NewNetworkService(providerRelay.Addr(), claudeSettings, codexSettings)
+	captureService := services.NewCaptureService()
 
 	// 应用待处理的更新
 	go func() {
@@ -243,6 +248,7 @@ func main() {
 			application.NewService(consoleService),
 			application.NewService(customCliService),
 			application.NewService(networkService),
+		application.NewService(captureService),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),

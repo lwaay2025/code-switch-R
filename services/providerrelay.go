@@ -458,6 +458,7 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 			if forwardErr != nil {
 				errorMsg = forwardErr.Error()
 			}
+			CaptureFinalizeTurn(c, "error", 502)
 			c.JSON(http.StatusBadGateway, gin.H{
 				"error":         fmt.Sprintf("provider '%s' request failed: %s", provider.Name, errorMsg),
 				"provider_name": provider.Name,
@@ -535,6 +536,11 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 
 		query := flattenQuery(c.Request.URL.Query())
 		clientHeaders := cloneHeaders(c.Request.Header)
+
+		// 抓包：统一拦截记录请求（在重试/降级循环前只调用一次）
+		if strings.Contains(strings.ToLower(endpoint), "/responses") && globalCaptureEnabled.Load() {
+			CaptureInterceptRequest(c, kind, endpoint, bodyBytes, clientHeaders)
+		}
 
 		// 获取拉黑功能开关状态
 		blacklistEnabled := prs.blacklistService.ShouldUseFixedMode()
@@ -678,6 +684,7 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 
 			// 所有 Provider 都失败或被拉黑
 			if !attemptedUpstream && busySkipped > 0 {
+				CaptureFinalizeTurn(c, "error", 429)
 				c.JSON(http.StatusTooManyRequests, gin.H{
 					"error":          "all providers are busy",
 					"mode":           "concurrency_limit",
@@ -692,6 +699,7 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 			if lastError != nil {
 				errorMsg = lastError.Error()
 			}
+			CaptureFinalizeTurn(c, "error", 502)
 			c.JSON(http.StatusBadGateway, gin.H{
 				"error":         fmt.Sprintf("所有 Provider 都失败或被拉黑，最后尝试: %s - %s", lastProvider, errorMsg),
 				"lastProvider":  lastProvider,
@@ -828,6 +836,7 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 
 		// 所有 provider 都失败，返回 502
 		if !attemptedUpstream && busySkipped > 0 {
+			CaptureFinalizeTurn(c, "error", 429)
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error":          "all providers are busy",
 				"mode":           "concurrency_limit",
@@ -843,6 +852,7 @@ func (prs *ProviderRelayService) proxyHandler(kind string, endpoint string) gin.
 		fmt.Printf("[ERROR] 所有 %d 个 provider 均失败，最后尝试: %s | 错误: %s\n",
 			totalAttempts, lastProvider, errorMsg)
 
+		CaptureFinalizeTurn(c, "error", 502)
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error":          fmt.Sprintf("所有 %d 个 provider 均失败，最后错误: %s", totalAttempts, errorMsg),
 			"last_provider":  lastProvider,
@@ -972,9 +982,12 @@ func (prs *ProviderRelayService) forwardRequest(
 		}
 	}()
 
+	// 注意：CaptureInterceptRequest 已在 proxyHandler 层面统一调用
+
 	resp, err := executeUpstreamRequest(targetURL, headers, query, bodyBytes, kind, endpoint)
 	if resp != nil {
 		requestLog.HttpCode = resp.StatusCode()
+		CaptureSetResponseHeaders(c, resp.Headers())
 	}
 
 	if err != nil {
@@ -1015,6 +1028,7 @@ func (prs *ProviderRelayService) forwardRequest(
 		}
 
 		resp, err = executeUpstreamRequest(targetURL, retryHeaders, query, retryBody, kind, endpoint)
+		CaptureSetResponseHeaders(c, resp.Headers())
 		requestLog.HttpCode = 0
 		if resp != nil {
 			requestLog.HttpCode = resp.StatusCode()
@@ -1087,17 +1101,21 @@ func (prs *ProviderRelayService) forwardRequest(
 				if kind == "codex" {
 					if chainCapture != nil && chainCapture.IsUsableSuccess() {
 						persistCodexResponseChain(responseChainPlan, chainCapture.GetResponseID())
+						CaptureInterceptResponseChunk(c, body)
 						_, copyErr := resp.ToHttpResponseWriter(c.Writer)
 						if copyErr != nil {
 							fmt.Printf("[WARN] 复制响应到客户端失败（不影响provider成功判定）: %v\n", copyErr)
 						}
+			CaptureFinalizeTurn(c, "success", 200)
 						return true, nil, true
 					}
 					if !upstreamEventStream && isUsableCodexResponseBody(body) {
 						persistCodexResponseChain(responseChainPlan, extractCodexResponseID(body))
+						CaptureInterceptResponseChunk(c, body)
 						_, copyErr := resp.ToHttpResponseWriter(c.Writer)
 						if copyErr != nil {
 							fmt.Printf("[WARN] 复制响应到客户端失败（不影响provider成功判定）: %v\n", copyErr)
+CaptureFinalizeTurn(c, "success", 200)
 						}
 						return true, nil, true
 					}
@@ -1111,8 +1129,10 @@ func (prs *ProviderRelayService) forwardRequest(
 					persistCodexResponseChain(responseChainPlan, extractCodexResponseID(body))
 				}
 			}
+			CaptureInterceptResponseChunk(c, body)
 			_, copyErr := resp.ToHttpResponseWriter(c.Writer)
 			if copyErr != nil {
+		CaptureFinalizeTurn(c, "success", 200)
 				fmt.Printf("[WARN] 复制响应到客户端失败（不影响provider成功判定）: %v\n", copyErr)
 			}
 			return true, nil, true
@@ -1123,24 +1143,27 @@ func (prs *ProviderRelayService) forwardRequest(
 		if kind == "codex" && responseChainPlan.Active && responseChainPlan.SessionKey != "" {
 			c.Writer.Header().Set(codexResponseChainSessionHeader, responseChainPlan.SessionKey)
 		}
-		_, copyErr := resp.ToHttpResponseWriter(c.Writer, ReqeustLogHook(c, kind, requestLog, chainCapture))
+		_, copyErr := resp.ToHttpResponseWriter(c.Writer, MakeCaptureAwareHook(c, ReqeustLogHook(c, kind, requestLog, chainCapture)))
 		if copyErr != nil {
 			fmt.Printf("[WARN] 复制响应到客户端失败（不影响provider成功判定）: %v\n", copyErr)
+			CaptureFinalizeTurn(c, "error", 0)
 			return true, nil, true
 		}
 		if requestLog.OutputTokens == 0 && !isResponsesCompactVariantEndpoint(endpoint) {
 			if kind == "codex" && chainCapture != nil && chainCapture.IsUsableSuccess() {
 				persistCodexResponseChain(responseChainPlan, chainCapture.GetResponseID())
+				CaptureFinalizeTurn(c, "success", 200)
 				return true, nil, true
 			}
+			CaptureFinalizeTurn(c, "error", 0)
 			return false, errTokenZero, true
 		}
 		if kind == "codex" && chainCapture != nil {
 			persistCodexResponseChain(responseChainPlan, chainCapture.GetResponseID())
 		}
+		CaptureFinalizeTurn(c, "success", 200)
 		return true, nil, true
 	}
-
 	return false, fmt.Errorf("upstream status %d", status), false
 }
 

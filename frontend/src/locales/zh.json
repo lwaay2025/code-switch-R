@@ -958,5 +958,27 @@
       "tabPreview": "预览效果",
       "tabCurrent": "当前磁盘"
     }
-  }
+  },
+  "sidebar.capture": "抓包",
+  "components.capture.title": "抓包监控",
+  "components.capture.toggle": "开启抓包",
+  "components.capture.config": "配置",
+  "components.capture.retentionDays": "数据保留(天)",
+  "components.capture.maxRecords": "最大记录数",
+  "components.capture.saveConfig": "保存配置",
+  "components.capture.activities": "Activities",
+  "components.capture.turns": "Turns",
+  "components.capture.detail": "请求详情",
+  "components.capture.noData": "暂无数据",
+  "components.capture.selectActivity": "选择 Activity 查看",
+  "components.capture.selectTurn": "选择 Turn 查看详情",
+  "components.capture.exportJSON": "导出JSON",
+  "components.capture.requestHeaders": "请求头",
+  "components.capture.requestBody": "请求体",
+  "components.capture.responseHeaders": "响应头",
+  "components.capture.status": "状态",
+  "components.capture.duration": "耗时",
+  "components.capture.chunks": "Chunks",
+  "components.capture.bytes": "字节",
+  "components.capture.chunksLabel": "Chunks"
 }

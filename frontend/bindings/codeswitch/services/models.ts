@@ -593,6 +593,10 @@ export enum CLIPlatform {
 
     PlatformClaude = "claude",
     PlatformCodex = "codex",
+
+    /**
+     * 已废弃，保留兼容
+     */
     PlatformGemini = "gemini",
 };
 
@@ -625,6 +629,68 @@ export class CLITemplate {
             $$parsedSource["template"] = $$createField0_0($$parsedSource["template"]);
         }
         return new CLITemplate($$parsedSource as Partial<CLITemplate>);
+    }
+}
+
+export class CaptureConfig {
+    "enabled": boolean;
+    "retention_days": number;
+    "max_records": number;
+
+    /** Creates a new CaptureConfig instance. */
+    constructor($$source: Partial<CaptureConfig> = {}) {
+        if (!("enabled" in $$source)) {
+            this["enabled"] = false;
+        }
+        if (!("retention_days" in $$source)) {
+            this["retention_days"] = 0;
+        }
+        if (!("max_records" in $$source)) {
+            this["max_records"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CaptureConfig instance from a string or object.
+     */
+    static createFrom($$source: any = {}): CaptureConfig {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new CaptureConfig($$parsedSource as Partial<CaptureConfig>);
+    }
+}
+
+export class CaptureStats {
+    "total_activities": number;
+    "total_turns": number;
+    "total_requests": number;
+    "db_size_bytes": number;
+
+    /** Creates a new CaptureStats instance. */
+    constructor($$source: Partial<CaptureStats> = {}) {
+        if (!("total_activities" in $$source)) {
+            this["total_activities"] = 0;
+        }
+        if (!("total_turns" in $$source)) {
+            this["total_turns"] = 0;
+        }
+        if (!("total_requests" in $$source)) {
+            this["total_requests"] = 0;
+        }
+        if (!("db_size_bytes" in $$source)) {
+            this["db_size_bytes"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CaptureStats instance from a string or object.
+     */
+    static createFrom($$source: any = {}): CaptureStats {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new CaptureStats($$parsedSource as Partial<CaptureStats>);
     }
 }
 
@@ -960,7 +1026,7 @@ export class DeepLinkImportRequest {
     "resource": string;
 
     /**
-     * 目标应用 (claude/codex/gemini)
+     * 目标应用 (claude/codex)
      */
     "app": string;
 
@@ -1153,220 +1219,6 @@ export class EnvConflict {
     static createFrom($$source: any = {}): EnvConflict {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new EnvConflict($$parsedSource as Partial<EnvConflict>);
-    }
-}
-
-/**
- * GeminiAuthType 认证类型
- */
-export enum GeminiAuthType {
-    /**
-     * The Go zero value for the underlying type of the enum.
-     */
-    $zero = "",
-
-    /**
-     * Google 官方 OAuth
-     */
-    GeminiAuthOAuth = "oauth-personal",
-
-    /**
-     * API Key 认证
-     */
-    GeminiAuthAPIKey = "gemini-api-key",
-
-    /**
-     * PackyCode 合作方
-     */
-    GeminiAuthPackycode = "packycode",
-
-    /**
-     * 通用第三方
-     */
-    GeminiAuthGeneric = "generic",
-};
-
-/**
- * GeminiPreset 预设供应商
- */
-export class GeminiPreset {
-    "name": string;
-    "websiteUrl": string;
-    "apiKeyUrl"?: string;
-    "baseUrl"?: string;
-    "model"?: string;
-    "description"?: string;
-    "category": string;
-    "partnerPromotionKey"?: string;
-    "envConfig"?: { [_: string]: string };
-
-    /** Creates a new GeminiPreset instance. */
-    constructor($$source: Partial<GeminiPreset> = {}) {
-        if (!("name" in $$source)) {
-            this["name"] = "";
-        }
-        if (!("websiteUrl" in $$source)) {
-            this["websiteUrl"] = "";
-        }
-        if (!("category" in $$source)) {
-            this["category"] = "";
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new GeminiPreset instance from a string or object.
-     */
-    static createFrom($$source: any = {}): GeminiPreset {
-        const $$createField8_0 = $$createType4;
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        if ("envConfig" in $$parsedSource) {
-            $$parsedSource["envConfig"] = $$createField8_0($$parsedSource["envConfig"]);
-        }
-        return new GeminiPreset($$parsedSource as Partial<GeminiPreset>);
-    }
-}
-
-/**
- * GeminiProvider Gemini 供应商配置
- */
-export class GeminiProvider {
-    "id": string;
-    "name": string;
-    "websiteUrl"?: string;
-    "apiKeyUrl"?: string;
-    "baseUrl"?: string;
-    "apiKey"?: string;
-    "model"?: string;
-    "description"?: string;
-
-    /**
-     * official, third_party, custom
-     */
-    "category"?: string;
-
-    /**
-     * 用于识别供应商类型
-     */
-    "partnerPromotionKey"?: string;
-    "enabled": boolean;
-
-    /**
-     * 优先级分组 (1-10, 默认 1)
-     */
-    "level"?: number;
-
-    /**
-     * 最大并发请求数（0=不限制）
-     */
-    "maxConcurrentRequests"?: number;
-
-    /**
-     * .env 配置
-     */
-    "envConfig"?: { [_: string]: string };
-
-    /**
-     * settings.json 配置
-     */
-    "settingsConfig"?: { [_: string]: any };
-
-    /** Creates a new GeminiProvider instance. */
-    constructor($$source: Partial<GeminiProvider> = {}) {
-        if (!("id" in $$source)) {
-            this["id"] = "";
-        }
-        if (!("name" in $$source)) {
-            this["name"] = "";
-        }
-        if (!("enabled" in $$source)) {
-            this["enabled"] = false;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new GeminiProvider instance from a string or object.
-     */
-    static createFrom($$source: any = {}): GeminiProvider {
-        const $$createField13_0 = $$createType4;
-        const $$createField14_0 = $$createType5;
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        if ("envConfig" in $$parsedSource) {
-            $$parsedSource["envConfig"] = $$createField13_0($$parsedSource["envConfig"]);
-        }
-        if ("settingsConfig" in $$parsedSource) {
-            $$parsedSource["settingsConfig"] = $$createField14_0($$parsedSource["settingsConfig"]);
-        }
-        return new GeminiProvider($$parsedSource as Partial<GeminiProvider>);
-    }
-}
-
-/**
- * GeminiProxyStatus Gemini 代理状态
- */
-export class GeminiProxyStatus {
-    "enabled": boolean;
-    "base_url": string;
-
-    /** Creates a new GeminiProxyStatus instance. */
-    constructor($$source: Partial<GeminiProxyStatus> = {}) {
-        if (!("enabled" in $$source)) {
-            this["enabled"] = false;
-        }
-        if (!("base_url" in $$source)) {
-            this["base_url"] = "";
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new GeminiProxyStatus instance from a string or object.
-     */
-    static createFrom($$source: any = {}): GeminiProxyStatus {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new GeminiProxyStatus($$parsedSource as Partial<GeminiProxyStatus>);
-    }
-}
-
-/**
- * GeminiStatus Gemini 配置状态
- */
-export class GeminiStatus {
-    "enabled": boolean;
-    "currentProvider"?: string;
-    "authType": GeminiAuthType;
-    "hasApiKey": boolean;
-    "hasBaseUrl": boolean;
-    "model"?: string;
-
-    /** Creates a new GeminiStatus instance. */
-    constructor($$source: Partial<GeminiStatus> = {}) {
-        if (!("enabled" in $$source)) {
-            this["enabled"] = false;
-        }
-        if (!("authType" in $$source)) {
-            this["authType"] = GeminiAuthType.$zero;
-        }
-        if (!("hasApiKey" in $$source)) {
-            this["hasApiKey"] = false;
-        }
-        if (!("hasBaseUrl" in $$source)) {
-            this["hasBaseUrl"] = false;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new GeminiStatus instance from a string or object.
-     */
-    static createFrom($$source: any = {}): GeminiStatus {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new GeminiStatus($$parsedSource as Partial<GeminiStatus>);
     }
 }
 
@@ -2046,6 +1898,12 @@ export class Provider {
     "codexResponseChainEnabled"?: boolean;
 
     /**
+     * 供应商级价格覆盖：按 model 名覆盖默认模型价格。
+     * 未填写的字段继续回退到全局 model 默认价格。
+     */
+    "pricingOverrides"?: { [_: string]: ProviderPricingOverride };
+
+    /**
      * 可用性监控开关 - 在可用性页面配置
      * 启用后才会执行后台健康检查
      */
@@ -2123,7 +1981,8 @@ export class Provider {
     static createFrom($$source: any = {}): Provider {
         const $$createField10_0 = $$createType20;
         const $$createField11_0 = $$createType4;
-        const $$createField18_0 = $$createType22;
+        const $$createField16_0 = $$createType22;
+        const $$createField19_0 = $$createType24;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("supportedModels" in $$parsedSource) {
             $$parsedSource["supportedModels"] = $$createField10_0($$parsedSource["supportedModels"]);
@@ -2131,8 +1990,11 @@ export class Provider {
         if ("modelMapping" in $$parsedSource) {
             $$parsedSource["modelMapping"] = $$createField11_0($$parsedSource["modelMapping"]);
         }
+        if ("pricingOverrides" in $$parsedSource) {
+            $$parsedSource["pricingOverrides"] = $$createField16_0($$parsedSource["pricingOverrides"]);
+        }
         if ("availabilityConfig" in $$parsedSource) {
-            $$parsedSource["availabilityConfig"] = $$createField18_0($$parsedSource["availabilityConfig"]);
+            $$parsedSource["availabilityConfig"] = $$createField19_0($$parsedSource["availabilityConfig"]);
         }
         return new Provider($$parsedSource as Partial<Provider>);
     }
@@ -2243,6 +2105,32 @@ export class ProviderDailyStat {
     }
 }
 
+export class ProviderPricingOverride {
+    "input_cost_per_token"?: number;
+    "output_cost_per_token"?: number;
+    "output_cost_per_reasoning_token"?: number;
+    "cache_creation_input_token_cost"?: number;
+    "cache_creation_input_token_cost_above_1hr"?: number;
+    "cache_read_input_token_cost"?: number;
+    "input_cost_per_token_above_200k_tokens"?: number;
+    "input_cost_per_token_above_128k_tokens"?: number;
+    "output_cost_per_token_above_200k_tokens"?: number;
+
+    /** Creates a new ProviderPricingOverride instance. */
+    constructor($$source: Partial<ProviderPricingOverride> = {}) {
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProviderPricingOverride instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ProviderPricingOverride {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ProviderPricingOverride($$parsedSource as Partial<ProviderPricingOverride>);
+    }
+}
+
 /**
  * ProviderTimeline Provider 时间线（用于前端展示）
  */
@@ -2315,7 +2203,7 @@ export class ProviderTimeline {
      * Creates a new ProviderTimeline instance from a string or object.
      */
     static createFrom($$source: any = {}): ProviderTimeline {
-        const $$createField5_0 = $$createType22;
+        const $$createField5_0 = $$createType24;
         const $$createField6_0 = $$createType12;
         const $$createField7_0 = $$createType13;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
@@ -2579,7 +2467,6 @@ export class Skill {
 export class TargetCli {
     "claudeCode": boolean;
     "codex": boolean;
-    "gemini": boolean;
 
     /** Creates a new TargetCli instance. */
     constructor($$source: Partial<TargetCli> = {}) {
@@ -2588,9 +2475,6 @@ export class TargetCli {
         }
         if (!("codex" in $$source)) {
             this["codex"] = false;
-        }
-        if (!("gemini" in $$source)) {
-            this["gemini"] = false;
         }
 
         Object.assign(this, $$source);
@@ -2821,5 +2705,7 @@ const $$createType17 = $Create.Array($$createType16);
 const $$createType18 = $Create.Array($Create.Any);
 const $$createType19 = TargetCli.createFrom;
 const $$createType20 = $Create.Map($Create.Any, $Create.Any);
-const $$createType21 = AvailabilityConfig.createFrom;
-const $$createType22 = $Create.Nullable($$createType21);
+const $$createType21 = ProviderPricingOverride.createFrom;
+const $$createType22 = $Create.Map($Create.Any, $$createType21);
+const $$createType23 = AvailabilityConfig.createFrom;
+const $$createType24 = $Create.Nullable($$createType23);

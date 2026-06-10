@@ -3,6 +3,7 @@
 
 import * as AppSettingsService from "./appsettingsservice.js";
 import * as BlacklistService from "./blacklistservice.js";
+import * as CaptureService from "./captureservice.js";
 import * as ClaudeSettingsService from "./claudesettingsservice.js";
 import * as CliConfigService from "./cliconfigservice.js";
 import * as CodexSettingsService from "./codexsettingsservice.js";
@@ -11,7 +12,6 @@ import * as ConsoleService from "./consoleservice.js";
 import * as CustomCliService from "./customcliservice.js";
 import * as DeepLinkService from "./deeplinkservice.js";
 import * as EnvCheckService from "./envcheckservice.js";
-import * as GeminiService from "./geminiservice.js";
 import * as HealthCheckService from "./healthcheckservice.js";
 import * as ImportService from "./importservice.js";
 import * as LogService from "./logservice.js";
@@ -27,6 +27,7 @@ import * as UpdateService from "./updateservice.js";
 export {
     AppSettingsService,
     BlacklistService,
+    CaptureService,
     ClaudeSettingsService,
     CliConfigService,
     CodexSettingsService,
@@ -35,7 +36,6 @@ export {
     CustomCliService,
     DeepLinkService,
     EnvCheckService,
-    GeminiService,
     HealthCheckService,
     ImportService,
     LogService,
@@ -62,6 +62,8 @@ export {
     CLIConfigSnapshots,
     CLIPlatform,
     CLITemplate,
+    CaptureConfig,
+    CaptureStats,
     ClaudeProxyStatus,
     ConfigFile,
     ConfigImportResult,
@@ -74,11 +76,6 @@ export {
     DeepLinkImportRequest,
     EndpointLatency,
     EnvConflict,
-    GeminiAuthType,
-    GeminiPreset,
-    GeminiProvider,
-    GeminiProxyStatus,
-    GeminiStatus,
     HealthCheckHistory,
     HealthCheckResult,
     HeatmapStat,
@@ -93,6 +90,7 @@ export {
     Prompt,
     Provider,
     ProviderDailyStat,
+    ProviderPricingOverride,
     ProviderTimeline,
     ProxyInjection,
     ReqeustLog,

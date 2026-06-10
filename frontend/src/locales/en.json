@@ -957,5 +957,27 @@
       "tabPreview": "Preview",
       "tabCurrent": "Current"
     }
-  }
+  },
+  "sidebar.capture": "Capture",
+  "components.capture.title": "Packet Capture",
+  "components.capture.toggle": "Enable Capture",
+  "components.capture.config": "Config",
+  "components.capture.retentionDays": "Retention (days)",
+  "components.capture.maxRecords": "Max Records",
+  "components.capture.saveConfig": "Save Config",
+  "components.capture.activities": "Activities",
+  "components.capture.turns": "Turns",
+  "components.capture.detail": "Request Detail",
+  "components.capture.noData": "No data",
+  "components.capture.selectActivity": "Select an Activity",
+  "components.capture.selectTurn": "Select a Turn to view details",
+  "components.capture.exportJSON": "Export JSON",
+  "components.capture.requestHeaders": "Request Headers",
+  "components.capture.requestBody": "Request Body",
+  "components.capture.responseHeaders": "Response Headers",
+  "components.capture.status": "Status",
+  "components.capture.duration": "Duration",
+  "components.capture.chunks": "Chunks",
+  "components.capture.bytes": "Bytes",
+  "components.capture.chunksLabel": "Chunks"
 }

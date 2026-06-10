@@ -81,6 +81,7 @@ const navItems: NavItem[] = [
   { path: '/speedtest', icon: 'zap', labelKey: 'sidebar.speedtest', isNew: true },
   { path: '/env', icon: 'search', labelKey: 'sidebar.env', isNew: true },
   { path: '/logs', icon: 'bar-chart', labelKey: 'sidebar.logs' },
+  { path: '/capture', icon: 'activity', labelKey: 'sidebar.capture', isNew: true },
   { path: '/console', icon: 'terminal', labelKey: 'sidebar.console' },
   { path: '/settings', icon: 'settings', labelKey: 'sidebar.settings' },
 ]
@@ -380,3 +381,7 @@ html.dark .nav-item:hover {
   opacity: 0.6;
 }
 </style>
+import { computed, ref, onMounted, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import { fetchCurrentVersion } from '../services/version'

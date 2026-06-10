@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
+import CapturePage from '../components/Capture/Index.vue'
 import MainPage from '../components/Main/Index.vue'
 import LogsPage from '../components/Logs/Index.vue'
 import GeneralPage from '../components/General/Index.vue'
@@ -20,6 +21,7 @@ const routes = [
   { path: '/env', component: EnvCheckPage },
   { path: '/logs', component: LogsPage },
   { path: '/console', component: ConsolePage },
+  { path: '/capture', component: CapturePage },
   { path: '/settings', component: GeneralPage },
 ]
 
